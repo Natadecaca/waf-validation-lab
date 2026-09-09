@@ -237,7 +237,7 @@ VALIDATION_DEFS = {
         "http_method_label": "GET / POST",
         "waf_evidence_methods": ["GET"],
         "lab_methods": ["GET", "POST"],
-        "waf_request_pattern": "/admin/config?cmd=cat/root/.aws/credentials",
+        "waf_request_pattern": "/admin/config?cmd%3Dcat/root/.aws/credentials",
         "local_evidence_path": "lab-data/root/.aws/credentials",
         "description": (
             "Controlled validation of attacker-controlled command input "
@@ -260,7 +260,7 @@ VALIDATION_DEFS = {
             "POST to assess behavior across HTTP request methods."
         ),
         "replay_links": [
-            {"label": "Replay WAF Pattern (GET)", "href": "/admin/config?cmd=cat/root/.aws/credentials"},
+            {"label": "Replay WAF Pattern (GET)", "href": "/admin/config?cmd%3Dcat/root/.aws/credentials"},
         ],
         "safe_links": [
             {"label": "Controlled Safe Test — whoami", "href": "/admin/config?cmd=whoami"},
@@ -271,14 +271,14 @@ VALIDATION_DEFS = {
         "type": "lfi",
         "title": "Local File Inclusion (LFI)",
         "severity": "High",
-        "waf_reference": "SP_Asset-007 / SP_Asset-008",
+        "waf_reference": "SP_Asset-011",
         "endpoint": "/read",
         "param": "file",
         "endpoint_label": "/read?file=",
         "http_method_label": "GET",
         "waf_evidence_methods": ["GET"],
         "lab_methods": ["GET"],
-        "waf_request_pattern": "/read?file=../../.env",
+        "waf_request_pattern": "/read?file%3D../../.env",
         "local_evidence_path": "lab-data/.env",
         "description": (
             "Controlled validation of local file inclusion through an "
@@ -300,7 +300,7 @@ VALIDATION_DEFS = {
             "additional HTTP methods were tested for this finding."
         ),
         "replay_links": [
-            {"label": "Replay WAF Pattern (GET)", "href": "/read?file=../../.env"},
+            {"label": "Replay WAF Pattern (GET)", "href": "/read?file%3D../../.env"},
         ],
         "safe_links": [
             {"label": "Normal Access — /read", "href": "/read?file=handbook.txt"},
@@ -311,28 +311,28 @@ VALIDATION_DEFS = {
         "type": "trav",
         "title": "Directory Traversal",
         "severity": "High",
-        "waf_reference": "SP_Asset-009 / SP_Asset-011",
-        "endpoint": "/",
-        "param": "file",
-        "endpoint_label": "/?file=",
+        "waf_reference": "SP_Asset-013",
+        "endpoint": "/api/file",
+        "param": "path",
+        "endpoint_label": "/api/file?path=",
         "http_method_label": "GET",
         "waf_evidence_methods": ["GET"],
         "lab_methods": ["GET"],
-        "waf_request_pattern": "/?file=../../.env",
+        "waf_request_pattern": "/api/file?path%3D../../.env",
         "local_evidence_path": "lab-data/traversal-target/.env",
         "description": (
             "Controlled validation of path traversal escaping the intended "
             "application directory."
         ),
         "technical_summary": (
-            "The / endpoint joins a supplied file value onto its own "
-            "intended assets directory with no normalization, so \"../\" "
-            "segments escape it and reach internal application/HR "
+            "The /api/file endpoint joins a supplied path value onto its "
+            "own intended assets directory with no normalization, so "
+            "\"../\" segments escape it and reach internal application/HR "
             "configuration outside the intended directory. This is the "
             "same underlying primitive as VAL-LFI-001, reached through a "
-            "different application entry point (the homepage route rather "
-            "than /read) and escaping to a different, distinct resource so "
-            "the two findings' impact is clearly distinguishable."
+            "different application entry point and parameter name, and "
+            "escaping to a different, distinct resource so the two "
+            "findings' impact is clearly distinguishable."
         ),
         "business_impact": (
             "An attacker able to reach this endpoint could read internal "
@@ -344,20 +344,18 @@ VALIDATION_DEFS = {
             "additional HTTP methods were tested for this finding."
         ),
         "replay_links": [
-            {"label": "Replay WAF Pattern (GET)", "href": "/?file=../../.env"},
+            {"label": "Replay WAF Pattern (GET)", "href": "/api/file?path%3D../../.env"},
         ],
         "safe_links": [
-            {"label": "Normal Access — /", "href": "/?file=welcome.txt"},
+            {"label": "Normal Access — /api/file", "href": "/api/file?path=welcome.txt"},
         ],
     },
 }
 
 WAF_FINDING_MAP = {
     "SP_Asset-006": "VAL-CMD-001",
-    "SP_Asset-007": "VAL-LFI-001",
-    "SP_Asset-008": "VAL-LFI-001",
-    "SP_Asset-009": "VAL-TRAV-001",
-    "SP_Asset-011": "VAL-TRAV-001",
+    "SP_Asset-011": "VAL-LFI-001",
+    "SP_Asset-013": "VAL-TRAV-001",
 }
 
 _LOG_LINE_RE = re.compile(r"^(?P<ts>\S+) \| (?P<vid>VAL-[A-Z]+-\d+) \| (?P<rest>.+)$")
@@ -421,7 +419,7 @@ _BEHAVIOR_BY_STATUS = {
 _EVIDENCE_SCENARIO_DEFS = [
     {"id": "VAL-CMD-001", "title": "OS Command Injection", "input_key": "cmd"},
     {"id": "VAL-LFI-001", "title": "Local File Inclusion (LFI)", "input_key": "file"},
-    {"id": "VAL-TRAV-001", "title": "Directory Traversal", "input_key": "file"},
+    {"id": "VAL-TRAV-001", "title": "Directory Traversal", "input_key": "path"},
 ]
 
 
@@ -482,18 +480,8 @@ def login_required(view):
 # --------------------------------------------------------------------
 @app.route("/")
 def landing():
-    # --------------------------------------------------------------
-    # INTENTIONAL VULNERABILITY (VAL-TRAV-001 — see _serve_lfi_target()
-    # below, shared with VAL-LFI-001 on /read). The WAF evidence
-    # includes the representative pattern "/?file=../../.env" hitting
-    # the root path directly, so this route must replay it. A normal
-    # visit (no "file" parameter) renders the PresensiKu landing page
-    # exactly as before.
-    # --------------------------------------------------------------
-    supplied_file = _get_waf_style_param("file")
-    if supplied_file:
-        source_ip = request.remote_addr or "unknown"
-        return _serve_lfi_target(supplied_file, "VAL-TRAV-001", "/", source_ip, TRAV_BASE_DIR)
+    # Plain PresensiKu landing page — no vulnerability here. VAL-TRAV-001
+    # now lives at /api/file?path= (see below), not "/".
     return render_template("landing.html")
 
 
@@ -1116,26 +1104,27 @@ def command():
     return Response(output, mimetype="text/plain")
 
 
-def _serve_lfi_target(supplied_file, validation_id, endpoint_path, source_ip, base_dir):
+def _serve_lfi_target(supplied_value, validation_id, endpoint_path, source_ip, base_dir, param_name="file"):
     """Shared VAL-LFI-001 / VAL-TRAV-001 execution primitive used by
-    "/read" (file param) and "/" respectively. One shared function, not
-    two forked copies of the vulnerable logic — the only difference
-    between the two findings is which application entry point reaches
-    it (and therefore which intended directory the same "../../.env"
-    traversal depth escapes from), exactly as described in the WAF
-    evidence. The two findings intentionally expose DIFFERENT
-    resources (lab-data/.env vs lab-data/traversal-target/.env) so a
+    "/read" (its "file" param) and "/api/file" (its "path" param)
+    respectively. One shared function, not two forked copies of the
+    vulnerable logic — the only difference between the two findings is
+    which application entry point/parameter name reaches it (and
+    therefore which intended directory the same "../../.env" traversal
+    depth escapes from), exactly as described in the WAF evidence. The
+    two findings intentionally expose DIFFERENT resources
+    (lab-data/.env vs lab-data/traversal-target/.env) so a
     demonstration makes the distinct impact of each obvious.
 
-    The supplied file value is joined onto `base_dir` with no
-    normalization or allow-listing, so "../" segments escape it. No
-    substitution: whatever actually exists at the resolved path (inside
-    or outside base_dir) is returned as-is.
+    The supplied value is joined onto `base_dir` with no normalization
+    or allow-listing, so "../" segments escape it. No substitution:
+    whatever actually exists at the resolved path (inside or outside
+    base_dir) is returned as-is.
     """
     raw_query = request.query_string.decode("utf-8", errors="replace")
     status_word = "FILE_READ" if validation_id == "VAL-LFI-001" else "TRAVERSAL_READ"
 
-    requested_path = os.path.join(base_dir, supplied_file)
+    requested_path = os.path.join(base_dir, supplied_value)
     resolved_path = os.path.normpath(requested_path)
 
     try:
@@ -1148,9 +1137,9 @@ def _serve_lfi_target(supplied_file, validation_id, endpoint_path, source_ip, ba
 
     logger.info(
         "%s | ip=%s | method=%s | endpoint=%s | raw_query=%r | "
-        "file=%r | resolved=%r | status=%s",
+        "%s=%r | resolved=%r | status=%s",
         validation_id, source_ip, request.method, endpoint_path,
-        raw_query, supplied_file, resolved_path, status,
+        raw_query, param_name, supplied_value, resolved_path, status,
     )
 
     # Raw impact response — the actual included/reached file content,
@@ -1162,14 +1151,14 @@ def _serve_lfi_target(supplied_file, validation_id, endpoint_path, source_ip, ba
 def read():
     # --------------------------------------------------------------
     # INTENTIONAL VULNERABILITY (VAL-LFI-001)
-    # This lab route reproduces the WAF findings SP_Asset-007 /
-    # SP_Asset-008:
-    #   /read?file=../../.env
-    # The "file" parameter is joined onto the intended documents
-    # directory (LFI_BASE_DIR) with no normalization or allow-listing,
-    # so "../" segments include the contents of arbitrary local files.
-    # Do NOT add path sanitization here — it would defeat the purpose
-    # of the lab.
+    # This lab route reproduces the WAF finding SP_Asset-011:
+    #   /read?file%3D../../.env
+    # (the "%3D" is the WAF-log-style encoded "=" — see
+    # _get_waf_style_param()). The "file" parameter is joined onto the
+    # intended documents directory (LFI_BASE_DIR) with no normalization
+    # or allow-listing, so "../" segments include the contents of
+    # arbitrary local files. Do NOT add path sanitization here — it
+    # would defeat the purpose of the lab.
     # --------------------------------------------------------------
     source_ip = request.remote_addr or "unknown"
     supplied_file = _get_waf_style_param("file")
@@ -1184,6 +1173,36 @@ def read():
         return Response("", mimetype="text/plain")
 
     return _serve_lfi_target(supplied_file, "VAL-LFI-001", "/read", source_ip, LFI_BASE_DIR)
+
+
+@app.route("/api/file", methods=["GET"])
+def api_file():
+    # --------------------------------------------------------------
+    # INTENTIONAL VULNERABILITY (VAL-TRAV-001)
+    # This lab route reproduces the WAF finding SP_Asset-013:
+    #   /api/file?path%3D../../.env
+    # The "path" parameter is joined onto its own intended assets
+    # directory (TRAV_BASE_DIR) with no normalization or allow-listing,
+    # so "../" segments escape it and reach files outside the intended
+    # directory. Shares _serve_lfi_target() with VAL-LFI-001 above, but
+    # with a different parameter name, entry point, and target
+    # directory, so the two findings' impact is clearly distinct. Do
+    # NOT add path sanitization here — it would defeat the purpose of
+    # the lab.
+    # --------------------------------------------------------------
+    source_ip = request.remote_addr or "unknown"
+    supplied_path = _get_waf_style_param("path")
+
+    if not supplied_path:
+        logger.info(
+            "VAL-TRAV-001 | ip=%s | method=%s | endpoint=/api/file | "
+            "raw_query=%r | path=<none> | status=NO_INPUT",
+            source_ip, request.method,
+            request.query_string.decode("utf-8", errors="replace"),
+        )
+        return Response("", mimetype="text/plain")
+
+    return _serve_lfi_target(supplied_path, "VAL-TRAV-001", "/api/file", source_ip, TRAV_BASE_DIR, param_name="path")
 
 
 @app.route("/download", methods=["GET"])
