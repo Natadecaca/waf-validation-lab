@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Cuti & Izin{% endblock %}
+{% block page_title %}Cuti & Izin{% endblock %}
+{% block page_subtitle %}Riwayat pengajuan cuti dan izin Anda{% endblock %}
+
+{% block content %}
+
+<div class="section">
+  <div class="card" style="max-width:480px;">
+    <div class="section-title">Sisa Cuti Tahunan</div>
+    <h3 style="margin:0;">9 <span class="muted" style="font-size:13px; font-weight:400;">hari tersisa dari 12 hari</span></h3>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Riwayat Pengajuan</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Jenis</th><th>Mulai</th><th>Selesai</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for l in leave_history %}
+        <tr>
+          <td>{{ l.type }}</td>
+          <td class="mono">{{ l.start }}</td>
+          <td class="mono">{{ l.end }}</td>
+          <td>
+            {% if l.status == "Disetujui" %}
+              <span class="badge badge-success">{{ l.status }}</span>
+            {% else %}
+              <span class="badge badge-neutral">{{ l.status }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

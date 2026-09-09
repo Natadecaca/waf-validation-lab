@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}{{ v.id }}{% endblock %}
+{% block page_title %}{{ v.title }}{% endblock %}
+{% block page_subtitle %}{{ v.description }}{% endblock %}
+
+{% block content %}
+
+<div class="banner">
+  <span class="tag mono">{{ v.id }}</span>
+  <span class="field">Severity: <b>{{ v.severity }}</b></span>
+  <span class="field">Status: <b style="color:var(--success)">VALIDATED</b></span>
+</div>
+
+<div class="section">
+  <div class="section-title">WAF Request &rarr; Direct Browser Replay</div>
+  <div class="card">
+    <dl class="kv">
+      <dt>Finding</dt><dd>{{ v.title }}</dd>
+      <dt>Severity</dt><dd><span class="badge badge-danger">{{ v.severity }}</span></dd>
+      <dt>Validation ID</dt><dd class="mono">{{ v.id }}</dd>
+      <dt>WAF Reference</dt><dd class="mono">{{ v.waf_reference }}</dd>
+      <dt>WAF Request</dt>
+      <dd>
+        <a class="mono" style="font-size:14px; font-weight:700;" href="{{ v.waf_request_pattern }}" target="_blank" rel="noopener">{{ v.waf_request_pattern }}</a>
+      </dd>
+      <dt>Local Evidence Path</dt><dd class="mono">{{ v.local_evidence_path }}</dd>
+      <dt>Endpoint</dt><dd class="mono">{{ v.endpoint }}</dd>
+      <dt>HTTP Method</dt><dd class="mono">{{ v.http_method_label }}</dd>
+      <dt>Observed Behavior</dt><dd>{{ v.technical_summary }}</dd>
+      <dt>Validation Status</dt><dd><span class="badge badge-success">{{ v.id }} &mdash; VALIDATED</span></dd>
+    </dl>
+  </div>
+  <p class="notice" style="margin-top:0.8rem;">Click "WAF Request" above to send that exact URL to the browser right now &mdash; no editing required. The browser output will match the contents of the local evidence file at <span class="mono">{{ v.local_evidence_path }}</span> exactly; both can be captured together as evidence.</p>
+</div>
+
+<div class="section">
+  <div class="section-title">Replay &amp; Manual Test</div>
+  <div class="card">
+    <div style="margin-bottom:1rem;">
+      <div class="section-title" style="font-size:11px;">Replay WAF Pattern</div>
+      <div class="run-links">
+        {% for link in v.replay_links %}
+        <a class="btn btn-primary" href="{{ link.href }}" target="_blank" rel="noopener" title="{{ link.href }}">{{ link.label }}</a>
+        {% endfor %}
+      </div>
+      <p class="muted" style="font-size:12px; margin:0.5rem 0 0;">
+        {% for link in v.replay_links %}<span class="mono">{{ link.href }}</span><br>{% endfor %}
+      </p>
+    </div>
+
+    <div>
+      <div class="section-title" style="font-size:11px;">Normal / Harmless Test</div>
+      <div class="run-links">
+        {% for link in v.safe_links %}
+        <a class="btn" href="{{ link.href }}" target="_blank" rel="noopener" title="{{ link.href }}">{{ link.label }}</a>
+        {% endfor %}
+      </div>
+      <p class="muted" style="font-size:12px; margin:0.5rem 0 0;">
+        {% for link in v.safe_links %}<span class="mono">{{ link.href }}</span><br>{% endfor %}
+      </p>
+    </div>
+
+    {% if v.type == "cmd" %}
+    <div style="margin-top:1.2rem; padding-top:1rem; border-top:1px solid var(--border);">
+      <div class="section-title" style="font-size:11px;">Security Diagnostics (custom command, POST)</div>
+      <form class="diagnostics-form" method="post" action="/admin/config" target="_blank" rel="noopener">
+        <div class="field-group">
+          <label for="diag-target">Target</label>
+          <input type="text" id="diag-target" value="validation-lab" readonly>
+        </div>
+        <div class="field-group">
+          <label for="diag-cmd">Diagnostic Command</label>
+          <input type="text" id="diag-cmd" name="cmd" value="hostname" autocomplete="off">
+        </div>
+        <button type="submit" class="btn btn-primary" style="justify-self:start;">Run Diagnostic (POST)</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Technical Details</div>
+  <div class="card">
+    <dl class="kv">
+      <dt>Supplied Parameter</dt><dd class="mono">{{ v.param }}</dd>
+      {% if v.type == "cmd" %}
+      <dt>Executed Command</dt><dd class="mono">Same value as the supplied "cmd" parameter, passed unmodified to the OS shell</dd>
+      {% elif v.type == "lfi" %}
+      <dt>Supplied File Pattern</dt><dd class="mono">../../.env</dd>
+      <dt>Resolved Path</dt><dd class="mono">Escapes the intended documents directory to {{ v.local_evidence_path }}</dd>
+      {% elif v.type == "trav" %}
+      <dt>Supplied File Pattern</dt><dd class="mono">../../.env</dd>
+      <dt>Resolved Path</dt><dd class="mono">Escapes the intended assets directory to {{ v.local_evidence_path }}</dd>
+      {% endif %}
+      <dt>Technical Summary</dt><dd>{{ v.technical_summary }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Evidence</div>
+  {% if entries %}
+    {% for e in entries %}
+    <div class="card" style="margin-bottom:0.7rem;">
+      <dl class="kv">
+        <dt>Timestamp</dt><dd class="mono">{{ e.timestamp }}</dd>
+        <dt>Source IP</dt><dd class="mono">{{ e.source_ip }}</dd>
+        <dt>HTTP Method</dt><dd class="mono">{{ e.method }}</dd>
+        <dt>Endpoint</dt><dd class="mono">{{ e.endpoint }}</dd>
+        <dt>Input</dt><dd class="mono">{{ e.input }}</dd>
+        <dt>Observed Behavior</dt><dd>{{ e.behavior }}</dd>
+        <dt>Validation Status</dt>
+        <dd>
+          {% if e.status in ("EXECUTED", "FILE_READ", "TRAVERSAL_READ") %}
+            <span class="badge badge-success">{{ e.status }}</span>
+          {% elif e.status == "NO_INPUT" %}
+            <span class="badge badge-neutral">{{ e.status }}</span>
+          {% else %}
+            <span class="badge badge-danger">{{ e.status }}</span>
+          {% endif %}
+        </dd>
+      </dl>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="notice">No log entries captured yet for {{ v.id }}. Click "WAF Request" above to trigger the validation, then refresh this page.</div>
+  {% endif %}
+</div>
+
+<div class="section">
+  <div class="section-title">WAF Evidence vs. Laboratory Validation</div>
+  <div class="card">
+    <p class="muted" style="margin:0;">{{ v.waf_note }}</p>
+  </div>
+</div>
+
+{% endblock %}

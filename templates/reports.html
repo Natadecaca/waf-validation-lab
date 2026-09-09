@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block page_title %}Security Validation Report{% endblock %}
+{% block page_subtitle %}Generate a branded PDF summarizing this assessment{% endblock %}
+
+{% block content %}
+
+{% if just_generated %}
+<div class="banner"><span class="tag" style="color:var(--success); background:var(--success-bg);">GENERATED</span><span class="field">The report was generated successfully.</span></div>
+{% endif %}
+
+<div class="section">
+  <div class="section-title">Assessment Overview</div>
+  <div class="card"><p class="muted">Target: <span class="mono">{{ lab_host }}:{{ lab_port }}</span> &middot; Application: DrishtiSec &middot; Environment: Isolated Lab</p></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Executive Summary</div>
+  <div class="card"><p class="muted">Three representative attack patterns identified in prior WAF analysis were reproduced against an isolated laboratory target. All three controlled validation scenarios completed successfully.</p></div>
+</div>
+
+<div class="section">
+  <div class="section-title">WAF Finding Summary</div>
+  <div class="card"><p class="muted">See the <a href="{{ url_for('waf_findings') }}">WAF Findings</a> page for the full finding-to-validation mapping.</p></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Validation Results</div>
+  <div class="card"><p class="muted">3 of 3 controlled validation scenarios completed and validated (VAL-CMD-001, VAL-LFI-001, VAL-TRAV-001).</p></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Evidence Summary</div>
+  <div class="card"><p class="muted">See the <a href="{{ url_for('evidence') }}">Evidence</a> page, derived from logs/application.log.</p></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Findings</div>
+  <div class="card"><p class="muted">See the <a href="{{ url_for('findings') }}">Findings</a> page for full detail on each validated finding.</p></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Conclusion</div>
+  <div class="card"><p class="muted">All three findings were successfully reproduced in this isolated laboratory environment. This does not represent exploitation of a production system.</p></div>
+</div>
+
+<div class="section">
+  <div class="section-title">Generate Report</div>
+  <div class="card">
+    <p class="muted" style="margin-top:0;">
+      {% if report_exists %}
+        A report was last generated on <span class="mono">{{ report_generated_at }}</span>.
+      {% else %}
+        No report has been generated yet.
+      {% endif %}
+    </p>
+    <div style="display:flex; gap:0.7rem; flex-wrap:wrap;">
+      <a class="btn btn-primary" href="{{ url_for('reports_generate') }}">Generate PDF Report</a>
+      {% if report_exists %}
+      <a class="btn" href="{{ url_for('reports_download') }}">Download Latest Report</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

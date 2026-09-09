@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign Up &middot; PresensiKu</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/drishtisec-logo.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/portal.css') }}">
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("drishtisec-theme");
+      if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+{% include "_icons.html" %}
+<div class="login-page">
+  <div class="login-card">
+    <div class="login-brand">
+      <a href="{{ url_for('landing') }}" class="mark"><img class="brand-logo" src="{{ url_for('static', filename='images/drishtisec-logo.png') }}" alt="DrishtiSec"></a>
+      <div>
+        <div class="name">PresensiKu</div>
+        <div class="sub">Employee Attendance System</div>
+      </div>
+    </div>
+
+    {% if error %}
+    <div class="login-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('signup') }}">
+      <div class="field-group">
+        <label for="full_name">Full Name</label>
+        <input type="text" id="full_name" name="full_name" autocomplete="name" required autofocus>
+      </div>
+      <div class="field-group">
+        <label for="company_name">Company Name</label>
+        <input type="text" id="company_name" name="company_name" autocomplete="organization" required>
+      </div>
+      <div class="field-group">
+        <label for="company_email">Company Email</label>
+        <input type="email" id="company_email" name="company_email" autocomplete="email" required>
+      </div>
+      <div class="field-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="new-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Request Access</button>
+    </form>
+
+    <div class="login-demo">
+      Already have an account? <a href="{{ url_for('login') }}">Sign in</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

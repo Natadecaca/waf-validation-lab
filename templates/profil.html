@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Profil{% endblock %}
+{% block page_title %}Profil Karyawan{% endblock %}
+{% block page_subtitle %}Informasi akun dan kepegawaian Anda{% endblock %}
+
+{% block content %}
+
+<div class="section">
+  <div class="card" style="max-width:520px;">
+    <dl class="kv">
+      <dt>Nama</dt><dd>{{ employee.name }}</dd>
+      <dt>ID Karyawan</dt><dd class="mono">{{ employee.employee_id }}</dd>
+      <dt>Jabatan</dt><dd>{{ employee.position }}</dd>
+      <dt>Departemen</dt><dd>{{ employee.department }}</dd>
+      <dt>Email</dt><dd class="mono">{{ employee.email }}</dd>
+      <dt>Tanggal Bergabung</dt><dd class="mono">{{ employee.join_date }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="section">
+  <div class="card" style="max-width:520px;">
+    <div class="section-title">Dokumen Karyawan</div>
+    <p class="muted" style="margin-top:0;">Lihat dokumen internal terkait profil Anda.</p>
+    <form class="diagnostics-form" method="get" action="/read">
+      <div class="field-group">
+        <label for="profile-doc">Nama Dokumen</label>
+        <input type="text" id="profile-doc" name="file" value="handbook.txt" autocomplete="off">
+      </div>
+      <button type="submit" class="btn" style="justify-self:start;">Lihat Dokumen</button>
+    </form>
+  </div>
+</div>
+
+{% endblock %}

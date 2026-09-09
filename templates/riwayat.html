@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Riwayat Kehadiran{% endblock %}
+{% block page_title %}Riwayat Kehadiran{% endblock %}
+{% block page_subtitle %}Riwayat presensi Anda{% endblock %}
+
+{% block content %}
+
+<div class="section">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Tanggal</th><th>Check In</th><th>Check Out</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for h in history %}
+        <tr>
+          <td class="mono">{{ h.date }}</td>
+          <td class="mono">{{ h.check_in }}</td>
+          <td class="mono">{{ h.check_out }}</td>
+          <td>
+            {% if h.status == "Hadir" %}
+              <span class="badge badge-success">{{ h.status }}</span>
+            {% elif h.status == "Terlambat" %}
+              <span class="badge badge-warning">{{ h.status }}</span>
+            {% else %}
+              <span class="badge badge-neutral">{{ h.status }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section">
+  <div class="card">
+    <div class="section-title">Laporan Bulanan</div>
+    <p class="muted" style="margin-top:0;">Unduh ringkasan kehadiran bulan ini dalam format teks.</p>
+    <a class="btn btn-primary" href="/download?file=public.txt">Download Attendance Report</a>
+  </div>
+</div>
+
+{% endblock %}

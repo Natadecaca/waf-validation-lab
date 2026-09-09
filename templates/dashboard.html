@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Security Assessment Overview{% endblock %}
+{% block page_subtitle %}Controlled security assessment and WAF finding validation{% endblock %}
+
+{% block content %}
+
+<div class="banner">
+  <span class="tag">ISOLATED VALIDATION LAB</span>
+  <span class="field">Target: <b class="mono">{{ lab_host }}:{{ lab_port }}</b></span>
+  <span class="field">Application: <b>DrishtiSec</b></span>
+  <span class="field">Environment Status: <b style="color:var(--success)">Online</b></span>
+</div>
+
+<div class="section">
+  <div class="section-title">Validation Summary</div>
+  <div class="grid grid-3">
+    {% for vid in validation_order %}
+    {% set v = validation_defs[vid] %}
+    <div class="card">
+      <span class="badge badge-danger" style="margin-bottom:0.6rem;">{{ v.severity }}</span>
+      <h3>{{ v.title }}</h3>
+      <p class="muted">WAF Reference: <span class="mono">{{ v.waf_reference }}</span></p>
+      <p class="muted">Endpoint: <span class="mono">{{ v.http_method_label }} {{ v.endpoint_label }}</span></p>
+      <p class="muted">{{ v.description }}</p>
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-top:0.8rem;">
+        <span class="badge badge-success">VALIDATED</span>
+        <a class="btn" href="{{ url_for('validation_detail', validation_id=vid) }}">View Validation</a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Recent Activity</div>
+  {% if recent_activity %}
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Timestamp</th><th>Validation</th><th>Endpoint</th><th>Source IP</th><th>HTTP Method</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for e in recent_activity %}
+        <tr>
+          <td class="mono">{{ e.timestamp }}</td>
+          <td>{{ e.validation_id }}</td>
+          <td class="mono">{{ e.endpoint }}</td>
+          <td class="mono">{{ e.source_ip }}</td>
+          <td class="mono">{{ e.method }}</td>
+          <td>
+            {% if e.status in ("EXECUTED", "FILE_READ", "TRAVERSAL_READ") %}
+              <span class="badge badge-success">{{ e.status }}</span>
+            {% elif e.status == "NO_INPUT" %}
+              <span class="badge badge-neutral">{{ e.status }}</span>
+            {% else %}
+              <span class="badge badge-danger">{{ e.status }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="notice">Application log integration available &mdash; no validation requests recorded yet in logs/application.log.</div>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,4 @@
+Welcome to PresensiKu.
+
+This is a placeholder asset served from the application's public assets
+directory. Nothing sensitive is stored here.

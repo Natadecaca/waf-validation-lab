@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block page_title %}Selamat datang, {{ employee.name }}{% endblock %}
+{% block page_subtitle %}Ringkasan kehadiran Anda hari ini{% endblock %}
+
+{% block content %}
+
+<div class="section">
+  <div class="grid grid-3">
+    <div class="card">
+      <div class="section-title">Status Hari Ini</div>
+      <h3 style="margin:0 0 0.4rem;">
+        {% if today_status == "Hadir" %}
+          <span class="badge badge-success">{{ today_status }}</span>
+        {% elif today_status == "Terlambat" %}
+          <span class="badge badge-warning">{{ today_status }}</span>
+        {% else %}
+          <span class="badge badge-neutral">{{ today_status }}</span>
+        {% endif %}
+      </h3>
+      <p class="muted" style="margin:0;">Check In: <span class="mono">{{ check_in_time or "-" }}</span></p>
+      <p class="muted" style="margin:0;">Check Out: <span class="mono">{{ check_out_time or "-" }}</span></p>
+      <div style="margin-top:0.8rem;">
+        <a class="btn btn-primary" href="{{ url_for('presensi') }}">Buka Presensi</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Minggu Ini</div>
+      <p class="muted" style="margin:0;">Hadir: <b style="color:var(--text-primary)">4 hari</b></p>
+      <p class="muted" style="margin:0;">Terlambat: <b style="color:var(--text-primary)">1 hari</b></p>
+      <p class="muted" style="margin:0;">Cuti: <b style="color:var(--text-primary)">1 hari</b></p>
+    </div>
+
+    <div class="card">
+      <div class="section-title">Ringkasan Bulan Ini</div>
+      <p class="muted" style="margin:0;">Total Hadir: <b style="color:var(--text-primary)">18 hari</b></p>
+      <p class="muted" style="margin:0;">Sisa Cuti: <b style="color:var(--text-primary)">9 hari</b></p>
+      <div style="margin-top:0.8rem;">
+        <a class="btn" href="{{ url_for('riwayat') }}">Lihat Riwayat</a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Kehadiran Terbaru</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Tanggal</th><th>Check In</th><th>Check Out</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+        {% for h in recent_history %}
+        <tr>
+          <td class="mono">{{ h.date }}</td>
+          <td class="mono">{{ h.check_in }}</td>
+          <td class="mono">{{ h.check_out }}</td>
+          <td>
+            {% if h.status == "Hadir" %}
+              <span class="badge badge-success">{{ h.status }}</span>
+            {% elif h.status == "Terlambat" %}
+              <span class="badge badge-warning">{{ h.status }}</span>
+            {% else %}
+              <span class="badge badge-neutral">{{ h.status }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

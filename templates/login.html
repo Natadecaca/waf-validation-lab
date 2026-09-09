@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign In &middot; PresensiKu</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/drishtisec-logo.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/portal.css') }}">
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("drishtisec-theme");
+      if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+{% include "_icons.html" %}
+<div class="login-page">
+  <div class="login-card">
+    <div class="login-brand">
+      <a href="{{ url_for('landing') }}" class="mark"><img class="brand-logo" src="{{ url_for('static', filename='images/drishtisec-logo.png') }}" alt="DrishtiSec"></a>
+      <div>
+        <div class="name">PresensiKu</div>
+        <div class="sub">Employee Attendance System</div>
+      </div>
+    </div>
+
+    {% if signup_notice %}
+    <div class="login-error" style="background:var(--success-bg); color:var(--success); border-color:var(--success);">
+      Account request received. Sign in below to continue.
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="login-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('login', next=request.args.get('next')) }}">
+      <div class="field-group">
+        <label for="username">Username</label>
+        <input type="text" id="username" name="username" autocomplete="username" required autofocus>
+      </div>
+      <div class="field-group">
+        <label for="password">Password</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+    </form>
+
+    <div class="login-demo">
+      Demo account:<br>
+      Username: <code>labuser</code> &nbsp; Password: <code>labpass</code>
+    </div>
+
+    <div class="login-demo">
+      Don't have an account? <a href="{{ url_for('signup') }}">Sign up</a>
+    </div>
+  </div>
+</div>
+</body>
+</html>

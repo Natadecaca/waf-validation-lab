@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Presensi{% endblock %}
+{% block page_title %}Presensi{% endblock %}
+{% block page_subtitle %}Catat kehadiran Anda untuk hari ini{% endblock %}
+
+{% block content %}
+
+<div class="section">
+  <div class="card" style="max-width:420px;">
+    <div class="section-title">Status Hari Ini</div>
+    <h3 style="margin:0 0 0.6rem;">
+      {% if status == "Hadir" %}
+        <span class="badge badge-success">{{ status }}</span>
+      {% elif status == "Terlambat" %}
+        <span class="badge badge-warning">{{ status }}</span>
+      {% else %}
+        <span class="badge badge-neutral">{{ status }}</span>
+      {% endif %}
+    </h3>
+
+    <dl class="kv">
+      <dt>Nama</dt><dd>{{ employee.name }}</dd>
+      <dt>Check In</dt><dd class="mono">{{ check_in_time or "Belum check in" }}</dd>
+      <dt>Check Out</dt><dd class="mono">{{ check_out_time or "Belum check out" }}</dd>
+    </dl>
+
+    <div style="display:flex; gap:0.7rem; margin-top:1rem;">
+      {% if not check_in_time %}
+      <a class="btn btn-primary" href="{{ url_for('presensi_checkin') }}">Check In</a>
+      {% elif not check_out_time %}
+      <a class="btn btn-primary" href="{{ url_for('presensi_checkout') }}">Check Out</a>
+      {% else %}
+      <span class="badge badge-success">Presensi hari ini selesai</span>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

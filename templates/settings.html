@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block page_title %}Settings{% endblock %}
+{% block page_subtitle %}Lab environment configuration{% endblock %}
+
+{% block content %}
+
+<div class="section">
+  <div class="section-title">Environment</div>
+  <div class="card">
+    <dl class="kv">
+      <dt>LAB_HOST</dt><dd class="mono">{{ lab_host }}</dd>
+      <dt>LAB_PORT</dt><dd class="mono">{{ lab_port }}</dd>
+      <dt>Signed in as</dt><dd class="mono">{{ current_user }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Appearance</div>
+  <div class="card">
+    <p class="muted">Use the theme toggle in the top bar to switch between light and dark mode. Your preference is stored locally in this browser.</p>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Lab Reset</div>
+  <div class="card">
+    <p class="muted">Run <code>./reset.sh</code> from the project directory to clear logs and restore controlled proof files to their initial state.</p>
+  </div>
+</div>
+
+{% endblock %}

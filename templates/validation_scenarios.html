@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Validation Scenarios{% endblock %}
+{% block page_title %}Validation Scenarios{% endblock %}
+{% block page_subtitle %}Controlled reproduction of representative WAF-identified attack patterns{% endblock %}
+
+{% block content %}
+
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Validation ID</th><th>Vulnerability</th><th>WAF Reference</th><th>HTTP Method</th><th>Endpoint</th><th>Status</th><th>Evidence</th></tr>
+    </thead>
+    <tbody>
+      {% for vid in validation_order %}
+      {% set v = validation_defs[vid] %}
+      <tr>
+        <td class="mono">{{ vid }}</td>
+        <td>{{ v.title }}</td>
+        <td class="mono">{{ v.waf_reference }}</td>
+        <td class="mono">{{ v.http_method_label }}</td>
+        <td class="mono">{{ v.endpoint_label }}</td>
+        <td><span class="badge badge-success">VALIDATED</span></td>
+        <td><a href="{{ url_for('validation_detail', validation_id=vid) }}">View Validation</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="notice" style="margin-top:1rem;">Select a scenario to open its unified validation detail page, including technical evidence and a live diagnostic where applicable.</div>
+
+{% endblock %}

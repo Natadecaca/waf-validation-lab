@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Evidence{% endblock %}
+{% block page_title %}Evidence Viewer{% endblock %}
+{% block page_subtitle %}Evidence derived from logs/application.log for each validation scenario{% endblock %}
+
+{% block content %}
+
+{% for scenario in evidence_scenarios %}
+<div class="section">
+  <div class="section-title">{{ scenario.id }} &middot; {{ scenario.title }}</div>
+  {% if scenario.entries %}
+    {% for e in scenario.entries %}
+    <div class="card" style="margin-bottom:0.7rem;">
+      <dl class="kv">
+        <dt>Validation ID</dt><dd>{{ scenario.id }}</dd>
+        <dt>Timestamp</dt><dd class="mono">{{ e.timestamp }}</dd>
+        <dt>Source IP</dt><dd class="mono">{{ e.source_ip }}</dd>
+        <dt>HTTP Method</dt><dd class="mono">{{ e.method }}</dd>
+        <dt>Endpoint</dt><dd class="mono">{{ e.endpoint }}</dd>
+        <dt>Input</dt><dd class="mono">{{ e.input }}</dd>
+        <dt>Observed Behavior</dt><dd>{{ e.behavior }}</dd>
+        <dt>Validation Status</dt>
+        <dd>
+          {% if e.status in ("EXECUTED", "FILE_READ", "TRAVERSAL_READ") %}
+            <span class="badge badge-success">{{ e.status }}</span>
+          {% elif e.status == "NO_INPUT" %}
+            <span class="badge badge-neutral">{{ e.status }}</span>
+          {% else %}
+            <span class="badge badge-danger">{{ e.status }}</span>
+          {% endif %}
+        </dd>
+      </dl>
+    </div>
+    {% endfor %}
+  {% else %}
+    <div class="notice">No log entries found yet for {{ scenario.id }}. Trigger the validation from the Validation Scenarios page to populate this view from logs/application.log.</div>
+  {% endif %}
+</div>
+{% endfor %}
+
+{% endblock %}

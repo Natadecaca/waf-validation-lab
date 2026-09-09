@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Informasi Perusahaan{% endblock %}
+{% block page_title %}Informasi Perusahaan{% endblock %}
+{% block page_subtitle %}Tentang perusahaan Anda{% endblock %}
+
+{% block content %}
+
+<div class="section">
+  <div class="card" style="max-width:560px;">
+    <dl class="kv">
+      <dt>Nama Perusahaan</dt><dd>{{ company.name }}</dd>
+      <dt>Alamat</dt><dd>{{ company.address }}</dd>
+      <dt>Telepon</dt><dd class="mono">{{ company.phone }}</dd>
+      <dt>Email HR</dt><dd class="mono">{{ company.email }}</dd>
+      <dt>Jam Kerja</dt><dd>{{ company.working_hours }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="section">
+  <div class="card" style="max-width:560px;">
+    <div class="section-title">Tentang</div>
+    <p class="muted" style="margin:0;">{{ company.about }}</p>
+  </div>
+</div>
+
+{% endblock %}

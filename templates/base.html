@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Dashboard{% endblock %} · {% if nav_context == "security" %}DrishtiSec{% else %}PresensiKu{% endif %}</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/drishtisec-logo.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/portal.css') }}">
+<script>
+  /* Apply saved theme before first paint to avoid a flash of the wrong theme. */
+  (function () {
+    try {
+      var t = localStorage.getItem("drishtisec-theme");
+      if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+{% include "_icons.html" %}
+<div class="app-shell">
+
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <div class="mark"><img class="brand-logo" src="{{ url_for('static', filename='images/drishtisec-logo.png') }}" alt="DrishtiSec"></div>
+      {% if nav_context == "security" %}
+      <div>
+        <div class="name">DrishtiSec</div>
+        <div class="sub">Security Assessment</div>
+      </div>
+      {% else %}
+      <div>
+        <div class="name">PresensiKu</div>
+        <div class="sub">Employee Attendance System</div>
+      </div>
+      {% endif %}
+    </div>
+    <nav class="sidebar-nav">
+      {% for section in nav_sections %}
+      <div class="nav-section">
+        {% if section.label %}<div class="nav-label">{{ section.label }}</div>{% endif %}
+        {% for item in section.links %}
+        <a class="nav-item {% if request.endpoint == item.endpoint %}active{% endif %}" href="{{ url_for(item.endpoint) }}">
+          <svg><use href="#icon-{{ item.icon }}"></use></svg>
+          <span>{{ item.name }}</span>
+        </a>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </nav>
+    <div class="sidebar-foot">
+      {% if nav_context == "security" %}
+      <a href="{{ url_for('portal_dashboard') }}" style="color:var(--text-muted); text-decoration:none;">&larr; Back to PresensiKu</a>
+      {% else %}
+      <a href="{{ url_for('portal_security') }}" style="color:var(--text-muted); text-decoration:none;">DrishtiSec Security Assessment &rarr;</a>
+      {% endif %}
+    </div>
+  </aside>
+
+  <div class="main-col">
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="hamburger" id="sidebar-toggle" aria-label="Toggle navigation">
+          <svg width="16" height="16"><use href="#icon-menu"></use></svg>
+        </button>
+        <div class="breadcrumb">
+          {% for crumb in breadcrumb %}
+            {% if not loop.last %}<span>{{ crumb }}</span><span>/</span>{% else %}<span class="current">{{ crumb }}</span>{% endif %}
+          {% endfor %}
+        </div>
+      </div>
+      <div class="topbar-right">
+        <div class="env-pill">
+          <span class="dot"></span>
+          <span class="field-label">Environment:</span> Isolated Lab
+        </div>
+        <button class="icon-btn" id="theme-toggle" aria-label="Toggle theme" aria-pressed="true">
+          <svg width="16" height="16"><use href="#icon-moon"></use></svg>
+        </button>
+        <div class="user-menu">
+          <div class="user-avatar">{{ (current_user or "?")[:1] | upper }}</div>
+          <span>{{ current_user }}</span>
+          <a class="logout" href="{{ url_for('logout') }}">Log out</a>
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      <div class="page-header">
+        <h1>{% block page_title %}{% endblock %}</h1>
+        <p>{% block page_subtitle %}{% endblock %}</p>
+      </div>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+<script src="{{ url_for('static', filename='js/portal.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}WAF Findings{% endblock %}
+{% block page_title %}WAF Findings{% endblock %}
+{% block page_subtitle %}Finalized WAF findings used as hypotheses for controlled validation{% endblock %}
+
+{% block content %}
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Finding</th><th>Pattern</th><th>Validation</th><th>Status</th></tr></thead>
+    <tbody>
+      {% for finding_id, vid in waf_finding_map.items() %}
+      {% set v = validation_defs[vid] %}
+      <tr>
+        <td class="mono">{{ finding_id }}</td>
+        <td>{{ v.title }}</td>
+        <td><a href="{{ url_for('validation_detail', validation_id=vid) }}">{{ vid }}</a></td>
+        <td><span class="badge badge-success">Validated</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="notice" style="margin-top:1rem;">WAF references above are lab metadata describing the findings this lab was built to validate. No additional findings are represented.</div>
+
+<div class="section" style="margin-top:1.6rem;">
+  <div class="section-title">WAF Request Pattern vs. Local Evidence</div>
+  <p class="muted">The laboratory endpoint, parameter name, and request structure intentionally match the finalized WAF evidence and can be replayed byte-for-byte, directly in the browser. Each finding exposes a distinct controlled resource on disk.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>WAF Reference</th><th>WAF Request Pattern</th><th>Local Evidence Path</th><th>Validation</th></tr></thead>
+      <tbody>
+        {% for vid in validation_order %}
+        {% set v = validation_defs[vid] %}
+        <tr>
+          <td class="mono">{{ v.waf_reference }}</td>
+          <td class="mono">{{ v.waf_request_pattern }}</td>
+          <td class="mono">{{ v.local_evidence_path }}</td>
+          <td><a href="{{ url_for('validation_detail', validation_id=vid) }}"><span class="badge badge-success">{{ vid }} &mdash; VALIDATED</span></a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="section" style="margin-top:1.6rem;">
+  <div class="section-title">WAF Evidence vs. Laboratory Validation</div>
+  <p class="muted">WAF findings establish the original observed attack pattern. Laboratory validation may test the same underlying primitive more broadly (for example, across HTTP methods) to characterize its full behavior &mdash; this does not mean the additional coverage was present in the original WAF evidence.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Validation</th><th>WAF Evidence (Observed)</th><th>Laboratory Validation (Tested)</th></tr></thead>
+      <tbody>
+        {% for vid in validation_order %}
+        {% set v = validation_defs[vid] %}
+        <tr>
+          <td><a href="{{ url_for('validation_detail', validation_id=vid) }}">{{ vid }}</a> &mdash; {{ v.title }}</td>
+          <td class="mono">{{ v.waf_evidence_methods | join(", ") }}</td>
+          <td class="mono">{{ v.lab_methods | join(", ") }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% for vid in validation_order %}
+  {% set v = validation_defs[vid] %}
+  {% if v.lab_methods != v.waf_evidence_methods %}
+  <div class="notice" style="margin-top:0.8rem;"><b>{{ vid }}:</b> {{ v.waf_note }}</div>
+  {% endif %}
+  {% endfor %}
+</div>
+
+{% endblock %}
