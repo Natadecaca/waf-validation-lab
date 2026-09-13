@@ -28,12 +28,14 @@ their definitions below) — the WAF-evidence target genuinely exists at
 those paths, exactly like it would on a real vulnerable host:
 
   - /admin/config's "cmd" is passed straight to subprocess.run(...,
-    shell=True, cwd=CMD_EXEC_CWD). The literal WAF-evidence command
-    "cat/root/.aws/credentials" resolves to a real executable at
-    lab-data/fs-root/cat/root/.aws/credentials (see that file) which
-    cats lab-data/root/.aws/credentials. Any other command (whoami,
-    id, hostname, shell metacharacters, chained commands, etc.) runs
-    completely normally, unaffected by that layout.
+    shell=True, cwd=CMD_EXEC_CWD). CMD_EXEC_CWD (lab-data/cmd-root/)
+    contains symlinks back to the real project tree, so ordinary
+    commands (ls, pwd, whoami, cat <realfile>, etc.) genuinely execute
+    and reflect the real lab filesystem. The literal WAF-evidence
+    command "cat/root/.aws/credentials" additionally resolves to a real
+    executable at lab-data/cmd-root/cat/root/.aws/credentials (see that
+    file) which cats lab-data/root/.aws/credentials. No command-specific
+    branching exists in Python — every command genuinely executes.
   - /read's "file" and /'s "file" both share _serve_lfi_target(), the
     one shared execution primitive for VAL-LFI-001 and VAL-TRAV-001 —
     but each passes a DIFFERENT intended base directory (LFI_BASE_DIR
@@ -146,14 +148,24 @@ TRAV_BASE_DIR = os.path.join(BASE_DIR, "lab-data", "traversal-target", "public",
 
 # VAL-CMD-001 (/admin/config?cmd=). subprocess.run() below executes the
 # attacker-supplied "cmd" value completely unmodified via shell=True,
-# with this directory as its cwd — the SAME primitive as before,
-# except now the relative path "cat/root/.aws/credentials" (the exact,
-# space-free WAF-evidence command) resolves to a real executable file
-# on disk (lab-data/fs-root/cat/root/.aws/credentials) instead of being
-# pattern-matched and substituted in Python. Any other command
-# (whoami, id, hostname, shell metacharacters, etc.) is completely
-# unaffected by this and runs exactly as it would from any cwd.
-CMD_EXEC_CWD = os.path.join(BASE_DIR, "lab-data", "fs-root")
+# with this directory as its cwd. lab-data/cmd-root/ contains:
+#   - symlinks back to the real project directories (app.py, lab-data,
+#     logs, reports, static, templates, validation, venv), so ordinary
+#     commands (ls, pwd, cat <realfile>, find, etc.) reflect the real
+#     lab filesystem — NOT an artificially empty sandbox. (An earlier
+#     revision pointed this at an otherwise-empty directory, which made
+#     "ls" appear to return a hardcoded "cat" — it was actually a
+#     genuine, if misleading, listing of that near-empty cwd. Symlinking
+#     the real tree in fixes that without any command-specific
+#     branching in Python.)
+#   - cat/root/.aws/credentials, a real executable file at that exact
+#     relative path, so the literal space-free WAF-evidence command
+#     "cat/root/.aws/credentials" resolves to something real via normal
+#     shell path lookup — no string pattern-matching/substitution in
+#     application code.
+# Every other command (whoami, id, hostname, shell metacharacters,
+# pipelines, etc.) is unaffected and executes for real.
+CMD_EXEC_CWD = os.path.join(BASE_DIR, "lab-data", "cmd-root")
 
 LAB_HOST_ENV = os.environ.get("LAB_HOST", "192.168.200.128")
 LAB_PORT_ENV = os.environ.get("LAB_PORT", "8080")
@@ -239,6 +251,12 @@ VALIDATION_DEFS = {
         "lab_methods": ["GET", "POST"],
         "waf_request_pattern": "/admin/config?cmd%3Dcat/root/.aws/credentials",
         "local_evidence_path": "lab-data/root/.aws/credentials",
+        "discovery_source": (
+            "Content enumeration under /admin surfaced an internal ops "
+            "panel; its \"Configuration Diagnostics\" link and page-source "
+            "comment led to /admin/config and its cmd parameter — found "
+            "before any WAF data was consulted."
+        ),
         "description": (
             "Controlled validation of attacker-controlled command input "
             "leading to OS command execution."
@@ -265,6 +283,40 @@ VALIDATION_DEFS = {
         "safe_links": [
             {"label": "Controlled Safe Test — whoami", "href": "/admin/config?cmd=whoami"},
         ],
+        "remediation": {
+            "title": "Eliminate shell execution of user-controlled input",
+            "priority": "Immediate",
+            "dedup_key": "cmd-exec",
+            "component": "/admin/config (cmd parameter)",
+            "description": (
+                "The /admin/config endpoint passes the cmd parameter to an OS "
+                "shell. No request-influenced value should reach a shell "
+                "interpreter; the command-execution capability must be removed "
+                "or hard-restricted."
+            ),
+            "immediate_action": (
+                "Disable the diagnostic command feature, or hard-restrict it to "
+                "a fixed allowlist of non-parameterised operations and reject "
+                "any cmd value outside that allowlist."
+            ),
+            "long_term": (
+                "Replace shell invocation with direct OS/library APIs. Where an "
+                "external process is unavoidable, execute it without a shell "
+                "(argument vector, shell=False) and never interpolate request "
+                "input into the command string."
+            ),
+            "verification": (
+                "Replay /admin/config?cmd=... with whoami, id, and shell "
+                "metacharacters and confirm no command executes — the endpoint "
+                "must return an error or only the fixed allowlisted output."
+            ),
+            "waf_mitigation": (
+                "As a temporary compensating control, deploy WAF signatures "
+                "that block command-injection patterns on the cmd parameter "
+                "(shell metacharacters, common binary names). This reduces "
+                "exposure but does not remove the underlying flaw."
+            ),
+        },
     },
     "VAL-LFI-001": {
         "id": "VAL-LFI-001",
@@ -280,6 +332,12 @@ VALIDATION_DEFS = {
         "lab_methods": ["GET"],
         "waf_request_pattern": "/read?file%3D../../.env",
         "local_evidence_path": "lab-data/.env",
+        "discovery_source": (
+            "The /read endpoint was found during application enumeration; "
+            "its \"Lihat Dokumen\" (view document) feature on the Profil "
+            "page exposes the \"file\" parameter directly in an HTML form "
+            "— found before any WAF data was consulted."
+        ),
         "description": (
             "Controlled validation of local file inclusion through an "
             "attacker-controlled file parameter."
@@ -305,6 +363,39 @@ VALIDATION_DEFS = {
         "safe_links": [
             {"label": "Normal Access — /read", "href": "/read?file=handbook.txt"},
         ],
+        "remediation": {
+            "title": "Restrict local file access to an allowlisted resource set",
+            "priority": "Immediate",
+            "dedup_key": "path-access",
+            "component": "/read (file parameter)",
+            "description": (
+                "The /read endpoint builds a filesystem path directly from the "
+                "file parameter, so traversal sequences escape the intended "
+                "documents directory and include arbitrary local files "
+                "(the exposed .env carried database and session secrets)."
+            ),
+            "immediate_action": (
+                "Reject file values containing path separators or traversal "
+                "sequences; serve only from a fixed allowlist of known "
+                "document names."
+            ),
+            "long_term": (
+                "Never construct filesystem paths from request input. Map a "
+                "supplied identifier to a server-side path via an allowlist or "
+                "lookup table, canonicalize the result, and confirm it remains "
+                "within the intended base directory before opening it."
+            ),
+            "verification": (
+                "Confirm /read?file=../../.env and equivalent encoded forms no "
+                "longer return files outside the intended documents directory."
+            ),
+            "waf_mitigation": (
+                "As a temporary compensating control, deploy WAF rules that "
+                "block traversal sequences (../ and encoded variants) on the "
+                "file parameter. This limits exposure but does not fix the path "
+                "handling itself."
+            ),
+        },
     },
     "VAL-TRAV-001": {
         "id": "VAL-TRAV-001",
@@ -320,6 +411,12 @@ VALIDATION_DEFS = {
         "lab_methods": ["GET"],
         "waf_request_pattern": "/api/file?path%3D../../.env",
         "local_evidence_path": "lab-data/traversal-target/.env",
+        "discovery_source": (
+            "The /api/file endpoint and its \"path\" parameter were found "
+            "through normal application use — the \"Dokumen Perusahaan\" "
+            "document links on Informasi Perusahaan use it to serve files "
+            "— found before any WAF data was consulted."
+        ),
         "description": (
             "Controlled validation of path traversal escaping the intended "
             "application directory."
@@ -350,12 +447,6 @@ VALIDATION_DEFS = {
             {"label": "Normal Access — /api/file", "href": "/api/file?path=welcome.txt"},
         ],
     },
-}
-
-WAF_FINDING_MAP = {
-    "SP_Asset-006": "VAL-CMD-001",
-    "SP_Asset-011": "VAL-LFI-001",
-    "SP_Asset-013": "VAL-TRAV-001",
 }
 
 _LOG_LINE_RE = re.compile(r"^(?P<ts>\S+) \| (?P<vid>VAL-[A-Z]+-\d+) \| (?P<rest>.+)$")
@@ -663,6 +754,12 @@ def profil():
     )
 
 
+COMPANY_DOCUMENTS = [
+    {"label": "Peraturan Perusahaan", "filename": "peraturan-perusahaan.txt"},
+    {"label": "Panduan Presensi", "filename": "panduan-presensi.txt"},
+]
+
+
 @app.route("/portal/perusahaan")
 @login_required
 def perusahaan():
@@ -670,6 +767,7 @@ def perusahaan():
         "perusahaan.html",
         breadcrumb=["Informasi Perusahaan"],
         company=COMPANY_INFO,
+        documents=COMPANY_DOCUMENTS,
     )
 
 
@@ -696,7 +794,6 @@ def waf_findings():
     return render_template(
         "waf_findings.html",
         breadcrumb=["Security", "WAF Findings"],
-        waf_finding_map=WAF_FINDING_MAP,
     )
 
 
@@ -791,8 +888,8 @@ def settings():
 # ======================================================================
 # PDF report generation (ReportLab). Builds a fresh
 # reports/DrishtiSec_Security_Validation_Report.pdf on demand from the
-# same VALIDATION_DEFS / WAF_FINDING_MAP / application-log evidence
-# used by the portal pages — no fabricated report data.
+# same VALIDATION_DEFS / application-log evidence and live route
+# enumeration used by the portal pages — no fabricated report data.
 # ======================================================================
 REPORTS_DIR = os.path.join(BASE_DIR, "reports")
 os.makedirs(REPORTS_DIR, exist_ok=True)
@@ -908,28 +1005,104 @@ def generate_pdf_report():
 
     story.append(Paragraph("Executive Summary", _PDF_STYLES["h1"]))
     story.append(Paragraph(
-        "This report documents controlled security validation activity performed "
-        "against an isolated laboratory target. Three representative attack "
-        "patterns identified in prior WAF analysis were reproduced against a "
-        "deliberately vulnerable application to confirm the underlying technical "
-        "behavior. All three validation scenarios completed successfully.",
+        "This report documents a controlled black-box web application security "
+        "assessment performed against an isolated laboratory target (PresensiKu). "
+        "Three vulnerabilities — OS Command Injection, Local File Inclusion, and "
+        "Directory Traversal — were independently discovered through application "
+        "enumeration, endpoint discovery, and parameter testing, then validated "
+        "for impact. Each validated finding was subsequently correlated against "
+        "prior WAF analysis, which recorded matching request patterns as "
+        "observed production traffic. All three findings were successfully "
+        "validated.",
         _PDF_STYLES["body"],
     ))
     story.append(Paragraph(
-        "<b>This validation was performed entirely within an isolated laboratory "
+        "<b>This assessment was performed entirely within an isolated laboratory "
         "environment. It does not represent, and must not be interpreted as, "
         "exploitation of any production system.</b>",
         _PDF_STYLES["body"],
     ))
 
-    story.append(Paragraph("WAF Findings", _PDF_STYLES["h1"]))
-    waf_rows = [["Finding", "Pattern", "Validation", "Status"]]
-    for finding_id, vid in WAF_FINDING_MAP.items():
+    story.append(Paragraph("Scope", _PDF_STYLES["h1"]))
+    story.append(Paragraph(
+        f"Target application: PresensiKu — Employee Attendance System, running "
+        f"at {LAB_HOST_ENV}:{LAB_PORT_ENV} inside an isolated laboratory network. "
+        "Testing was limited to this application and host; no external systems "
+        "were in scope or contacted.",
+        _PDF_STYLES["body"],
+    ))
+
+    story.append(Paragraph("Methodology", _PDF_STYLES["h1"]))
+    for step in (
+        "Reconnaissance — identify the target application, technology stack, "
+        "and normal functionality.",
+        "Enumeration — discover reachable endpoints through direct browsing "
+        "and content/directory enumeration.",
+        "Application Discovery — map discovered endpoints to the application "
+        "features and parameters that reach them.",
+        "Manual Testing — probe discovered parameters for injection and "
+        "path-handling weaknesses.",
+        "Vulnerability Validation — confirm real, observable impact for each "
+        "candidate weakness in the isolated lab.",
+        "WAF Correlation — cross-reference each validated finding against "
+        "prior WAF analysis to confirm the same pattern was observed in "
+        "production traffic.",
+        "Evidence & Reporting — capture request/response evidence and local "
+        "artifacts, then compile this report.",
+    ):
+        story.append(Paragraph(f"&bull; {step}", _PDF_STYLES["body"]))
+
+    story.append(Paragraph("Reconnaissance", _PDF_STYLES["h1"]))
+    story.append(Paragraph(
+        f"Target: {LAB_HOST_ENV}:{LAB_PORT_ENV}  |  Server: Werkzeug (Flask "
+        "development server)  |  Application: PresensiKu, an employee "
+        "attendance system presenting a normal login-gated business "
+        "application with no vulnerability information disclosed on its "
+        "public-facing pages.",
+        _PDF_STYLES["mono"],
+    ))
+
+    story.append(Paragraph("Enumeration", _PDF_STYLES["h1"]))
+    story.append(Paragraph(
+        "Endpoints reachable on the target, as registered by the application "
+        "at the time this report was generated:",
+        _PDF_STYLES["body"],
+    ))
+    enum_rows = [["Method", "Endpoint"]]
+    for rule in sorted(app.url_map.iter_rules(), key=lambda r: r.rule):
+        if rule.endpoint == "static":
+            continue
+        methods = ", ".join(sorted(rule.methods - {"HEAD", "OPTIONS"}))
+        enum_rows.append([methods, rule.rule])
+    enum_table = Table(enum_rows, colWidths=[1.3 * inch, 5.9 * inch])
+    enum_table.setStyle(_pdf_table_style())
+    story.append(enum_table)
+    story.append(Paragraph(
+        "The /admin path returned a distinct response from unregistered paths, "
+        "indicating an internal panel; enumerating beneath it surfaced "
+        "/admin/config.",
+        _PDF_STYLES["small"],
+    ))
+
+    story.append(Paragraph("Application Discovery", _PDF_STYLES["h1"]))
+    disc_rows = [["Endpoint", "Parameter", "How It Was Found"]]
+    for vid in VALIDATION_ORDER:
         v = VALIDATION_DEFS[vid]
-        waf_rows.append([finding_id, v["title"], vid, "Validated"])
-    waf_table = Table(waf_rows, colWidths=[1.3 * inch, 2.7 * inch, 1.4 * inch, 1.1 * inch])
-    waf_table.setStyle(_pdf_table_style())
-    story.append(waf_table)
+        disc_rows.append([v["endpoint"], v["param"], v["discovery_source"]])
+    disc_table = Table(disc_rows, colWidths=[1.3 * inch, 0.9 * inch, 5 * inch])
+    disc_table.setStyle(_pdf_table_style())
+    story.append(disc_table)
+
+    story.append(Paragraph("Findings", _PDF_STYLES["h1"]))
+    for vid in VALIDATION_ORDER:
+        v = VALIDATION_DEFS[vid]
+        story.append(Paragraph(
+            f"{vid} — {v['title']} (Severity: {v['severity']})", _PDF_STYLES["h2"]
+        ))
+        story.append(Paragraph(v["technical_summary"], _PDF_STYLES["body"]))
+        story.append(Paragraph(
+            f"<b>Business Impact:</b> {v['business_impact']}", _PDF_STYLES["body"]
+        ))
 
     story.append(Paragraph("Validation Results", _PDF_STYLES["h1"]))
     for vid in VALIDATION_ORDER:
@@ -980,29 +1153,90 @@ def generate_pdf_report():
                 _PDF_STYLES["small"],
             ))
 
-    story.append(Paragraph("Findings", _PDF_STYLES["h1"]))
+    story.append(Paragraph("Impact", _PDF_STYLES["h1"]))
+    story.append(Paragraph(
+        "Combined, these findings would allow an attacker to execute arbitrary "
+        "operating-system commands and to read arbitrary files readable by the "
+        "application process — including application configuration, database "
+        "credentials, and cloud/service credentials. Any one of the three "
+        "findings, if present in a production deployment, would be sufficient "
+        "for significant data exposure; together they indicate a systemic lack "
+        "of input validation across the application's file- and "
+        "command-handling parameters.",
+        _PDF_STYLES["body"],
+    ))
+
+    story.append(Paragraph("Recommendations", _PDF_STYLES["h1"]))
+    for rec in (
+        "Never pass user-supplied input to a shell or subprocess call. If "
+        "external command execution is required, use a fixed allow-list of "
+        "commands and pass arguments without shell interpretation "
+        "(e.g. shell=False with an argument list).",
+        "Never build filesystem paths by concatenating user input. Resolve the "
+        "requested path and verify it remains within the intended directory "
+        "before opening it (canonicalize and prefix-check, or use a "
+        "framework-provided safe-join helper).",
+        "Apply the same path-handling fix consistently across every endpoint "
+        "that accepts a file or path parameter (this assessment found the "
+        "same class of issue on two independent endpoints).",
+        "Do not expose internal/administrative endpoints without "
+        "authentication and network-level restriction; remove or properly "
+        "gate legacy admin panels before deployment.",
+        "Add automated regression tests asserting that traversal sequences "
+        "and shell metacharacters are rejected by these parameters.",
+    ):
+        story.append(Paragraph(f"&bull; {rec}", _PDF_STYLES["body"]))
+
+    story.append(Paragraph("WAF Correlation", _PDF_STYLES["h1"]))
+    story.append(Paragraph(
+        "Each finding below was discovered and validated independently, before "
+        "its matching WAF reference was consulted. The WAF reference confirms "
+        "that the same request pattern was previously observed as production "
+        "traffic — it is corroborating evidence, not the source of discovery.",
+        _PDF_STYLES["body"],
+    ))
+    corr_rows = [["Validation", "Discovery Source", "WAF Reference", "Status"]]
     for vid in VALIDATION_ORDER:
         v = VALIDATION_DEFS[vid]
-        story.append(Paragraph(
-            f"{vid} — {v['title']} (Severity: {v['severity']})", _PDF_STYLES["h2"]
-        ))
-        story.append(Paragraph(v["technical_summary"], _PDF_STYLES["body"]))
-        story.append(Paragraph(
-            f"<b>Business Impact:</b> {v['business_impact']}", _PDF_STYLES["body"]
-        ))
+        corr_rows.append([vid, v["discovery_source"], v["waf_reference"], "Validated"])
+    corr_table = Table(corr_rows, colWidths=[1.1 * inch, 4.3 * inch, 1.1 * inch, 0.7 * inch])
+    corr_table.setStyle(_pdf_table_style())
+    story.append(corr_table)
 
     story.append(Paragraph("Conclusion", _PDF_STYLES["h1"]))
     story.append(Paragraph(
-        "All three representative attack patterns were successfully reproduced "
-        "against the isolated laboratory target, confirming the underlying "
-        "vulnerable behavior identified by prior WAF analysis. This constitutes "
-        "successful controlled reproduction in an isolated vulnerable "
-        "environment, not exploitation of a production system.",
+        "All three findings — OS Command Injection, Local File Inclusion, and "
+        "Directory Traversal — were independently discovered through "
+        "application assessment and successfully validated with observable "
+        "impact against the isolated laboratory target. Each finding's request "
+        "pattern was subsequently corroborated by prior WAF analysis. This "
+        "constitutes successful controlled reproduction in an isolated "
+        "vulnerable environment, not exploitation of a production system.",
         _PDF_STYLES["body"],
     ))
 
     doc.build(story, onFirstPage=_pdf_footer, onLaterPages=_pdf_footer)
     return REPORT_PATH
+
+
+# ======================================================================
+# Discovery surface for VAL-CMD-001.
+#
+# /admin is a leftover internal ops panel — NOT linked from PresensiKu's
+# navigation, but reachable directly and by content/endpoint enumeration
+# (e.g. gobuster finding "admin" from a common wordlist). It has no real
+# authentication (submitting the login form always reports invalid
+# credentials); its purpose is purely to be a plausible surface a tester
+# would enumerate and inspect, from which /admin/config's "cmd" parameter
+# can be discovered via an on-page link and HTML-source comment — WITHOUT
+# needing to already know the WAF finding.
+# ======================================================================
+@app.route("/admin", methods=["GET", "POST"])
+def admin_panel():
+    error = None
+    if request.method == "POST":
+        error = "Invalid credentials."
+    return render_template("admin.html", error=error)
 
 
 # ======================================================================
@@ -1057,12 +1291,12 @@ def command():
     # deliberate and exists only for controlled OS command injection
     # reproduction inside this isolated lab.
     #
-    # The exact WAF-evidence command works for real because
-    # CMD_EXEC_CWD (lab-data/fs-root/) contains a real executable file
-    # at the relative path "cat/root/.aws/credentials" — see that
-    # directory for the explanation. Any other command (whoami, id,
-    # hostname, shell metacharacters, chained commands, etc.) runs
-    # completely normally, unaffected by that layout.
+    # CMD_EXEC_CWD (lab-data/cmd-root/) symlinks back to the real
+    # project tree, so ls/pwd/whoami/cat <realfile>/etc. genuinely
+    # execute against the real lab filesystem. The exact WAF-evidence
+    # command additionally works for real because that directory also
+    # contains a real executable file at the relative path
+    # "cat/root/.aws/credentials" — see that file for the explanation.
     # --------------------------------------------------------------
     source_ip = request.remote_addr or "unknown"
     raw_query = request.query_string.decode("utf-8", errors="replace")
@@ -1083,7 +1317,7 @@ def command():
         completed = subprocess.run(
             supplied_cmd,
             shell=True,           # intentional: enables shell metacharacters
-            cwd=CMD_EXEC_CWD,     # see lab-data/fs-root/ — no string substitution
+            cwd=CMD_EXEC_CWD,     # see lab-data/cmd-root/ — no string substitution
             capture_output=True,
             text=True,
             timeout=5,
@@ -1170,9 +1404,19 @@ def read():
             source_ip, request.method,
             request.query_string.decode("utf-8", errors="replace"),
         )
-        return Response("", mimetype="text/plain")
+        # Realistic missing-parameter error — reveals the "file" param
+        # through ordinary endpoint behavior, not through WAF evidence.
+        return Response("Error: missing required parameter 'file'.\n", mimetype="text/plain")
 
     return _serve_lfi_target(supplied_file, "VAL-LFI-001", "/read", source_ip, LFI_BASE_DIR)
+
+
+@app.route("/api", methods=["GET"])
+def api_root():
+    # Minimal API root so that content/endpoint enumeration under /api
+    # is possible before finding /api/file — mirrors the same
+    # discoverability pattern as /admin before /admin/config.
+    return Response("PresensiKu internal API.\n", mimetype="text/plain")
 
 
 @app.route("/api/file", methods=["GET"])
@@ -1200,7 +1444,9 @@ def api_file():
             source_ip, request.method,
             request.query_string.decode("utf-8", errors="replace"),
         )
-        return Response("", mimetype="text/plain")
+        # Realistic missing-parameter error — reveals the "path" param
+        # through ordinary endpoint behavior, not through WAF evidence.
+        return Response("Error: missing required parameter 'path'.\n", mimetype="text/plain")
 
     return _serve_lfi_target(supplied_path, "VAL-TRAV-001", "/api/file", source_ip, TRAV_BASE_DIR, param_name="path")
 

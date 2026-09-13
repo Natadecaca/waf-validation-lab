@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Internal Admin</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/drishtisec-logo.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/portal.css') }}">
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("drishtisec-theme");
+      if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+{% include "_icons.html" %}
+<div class="login-page">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="mark"><img class="brand-logo" src="{{ url_for('static', filename='images/drishtisec-logo.png') }}" alt="DrishtiSec"></div>
+      <div>
+        <div class="name">Internal Admin</div>
+        <div class="sub">Ops access only</div>
+      </div>
+    </div>
+
+    {% if error %}
+    <div class="login-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('admin_panel') }}">
+      <div class="field-group">
+        <label for="admin-username">Username</label>
+        <input type="text" id="admin-username" name="username" autocomplete="username" required autofocus>
+      </div>
+      <div class="field-group">
+        <label for="admin-password">Password</label>
+        <input type="password" id="admin-password" name="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-block">Sign In</button>
+    </form>
+
+    <div class="login-demo">
+      Tools: <a href="/admin/config">Configuration Diagnostics</a>
+    </div>
+  </div>
+</div>
+<!-- legacy diagnostic endpoint retained for ops: /admin/config?cmd= -->
+</body>
+</html>

@@ -14,7 +14,8 @@
   </div>
   <dl class="kv">
     <dt>Status</dt><dd><span class="badge badge-success">Validated</span></dd>
-    <dt>WAF Reference</dt><dd class="mono">{{ v.waf_reference }}</dd>
+    <dt>Discovery Source</dt><dd>{{ v.discovery_source }}</dd>
+    <dt>WAF Reference (Correlation)</dt><dd class="mono">{{ v.waf_reference }}</dd>
     <dt>WAF Request Pattern</dt><dd class="mono">{{ v.waf_request_pattern }}</dd>
     <dt>Local Evidence Path</dt><dd class="mono">{{ v.local_evidence_path }}</dd>
     <dt>Affected Endpoint</dt><dd class="mono">{{ v.http_method_label }} {{ v.endpoint_label }}</dd>

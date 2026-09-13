@@ -24,4 +24,16 @@
   </div>
 </div>
 
+<div class="section">
+  <div class="card" style="max-width:560px;">
+    <div class="section-title">Dokumen Perusahaan</div>
+    <p class="muted" style="margin-top:0;">Dokumen internal yang dapat diakses karyawan.</p>
+    <ul style="margin:0; padding-left:1.1rem;">
+      {% for doc in documents %}
+      <li><a href="/api/file?path={{ doc.filename }}">{{ doc.label }}</a></li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
 {% endblock %}

@@ -1,0 +1,10 @@
+PresensiKu - Panduan Penggunaan
+================================
+
+1. Buka menu "Presensi" pada aplikasi.
+2. Tekan tombol "Check In" saat tiba di kantor.
+3. Tekan tombol "Check Out" sebelum pulang.
+4. Riwayat kehadiran dapat dilihat pada menu "Riwayat Kehadiran".
+5. Pengajuan cuti dilakukan melalui menu "Cuti & Izin".
+
+Untuk pertanyaan lebih lanjut, hubungi tim HR.

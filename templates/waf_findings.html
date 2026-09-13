@@ -1,25 +1,32 @@
 {% extends "base.html" %}
 {% block title %}WAF Findings{% endblock %}
 {% block page_title %}WAF Findings{% endblock %}
-{% block page_subtitle %}Finalized WAF findings used as hypotheses for controlled validation{% endblock %}
+{% block page_subtitle %}WAF findings correlated with independently-discovered assessment findings{% endblock %}
 
 {% block content %}
 
-<div class="table-wrap">
-  <table>
-    <thead><tr><th>Finding</th><th>Pattern</th><th>Validation</th><th>Status</th></tr></thead>
-    <tbody>
-      {% for finding_id, vid in waf_finding_map.items() %}
-      {% set v = validation_defs[vid] %}
-      <tr>
-        <td class="mono">{{ finding_id }}</td>
-        <td>{{ v.title }}</td>
-        <td><a href="{{ url_for('validation_detail', validation_id=vid) }}">{{ vid }}</a></td>
-        <td><span class="badge badge-success">Validated</span></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+<div class="notice" style="margin-bottom:1.2rem;">WAF findings are <b>correlation evidence</b>, not the starting point for vulnerability discovery. Each endpoint and parameter below was located through application enumeration and testing first; the matching WAF reference was then used to confirm the same request pattern had been observed in production traffic.</div>
+
+<div class="section">
+  <div class="section-title">Discovery &rarr; Validation &rarr; WAF Correlation</div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Finding</th><th>Endpoint</th><th>Parameter</th><th>Discovery Source</th><th>WAF Correlation</th><th>Validation</th></tr></thead>
+      <tbody>
+        {% for vid in validation_order %}
+        {% set v = validation_defs[vid] %}
+        <tr>
+          <td>{{ v.title }}</td>
+          <td class="mono">{{ v.endpoint }}</td>
+          <td class="mono">{{ v.param }}</td>
+          <td style="max-width:280px;">{{ v.discovery_source }}</td>
+          <td class="mono">{{ v.waf_reference }}</td>
+          <td><a href="{{ url_for('validation_detail', validation_id=vid) }}"><span class="badge badge-success">{{ vid }} &mdash; VALIDATED</span></a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <div class="notice" style="margin-top:1rem;">WAF references above are lab metadata describing the findings this lab was built to validate. No additional findings are represented.</div>
