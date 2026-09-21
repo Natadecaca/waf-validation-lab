@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Webmail Connection Test</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/drishtisec-logo.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/portal.css') }}">
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("drishtisec-theme");
+      if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+<div style="max-width:800px; margin:2rem auto; padding:0 1.2rem;">
+  <h2 style="margin-bottom:0.2rem;">Webmail Connection Test</h2>
+  {% if target_url %}<p class="mono" style="color:var(--text-muted); font-size:12.5px;">Target: {{ target_url }}</p>{% endif %}
+
+  {% if no_input %}
+  <div class="notice">Error: missing required parameter 'url'.</div>
+  {% elif error %}
+  <pre class="evidence" style="border-color:var(--danger); color:var(--danger);">{{ error }}</pre>
+  {% else %}
+  <p>HTTP Status: <span class="mono">{{ status_code }}</span></p>
+  <div class="section-title">Response Body (first 4KB)</div>
+  <pre class="evidence">{{ body }}</pre>
+  {% endif %}
+</div>
+</body>
+</html>

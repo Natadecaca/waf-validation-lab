@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}{{ doc.label }}{% endblock %}
+{% block page_title %}{{ doc.label }}{% endblock %}
+{% block page_subtitle %}{{ doc.summary }}{% endblock %}
+
+{% block content %}
+
+<div style="margin-bottom:1.2rem;">
+  <a class="btn" href="{{ url_for('perusahaan') }}">&larr; Kembali ke Dokumen Perusahaan</a>
+</div>
+
+<div class="doc-layout">
+  <div>
+
+    <div class="doc-letterhead" style="margin-bottom:1.2rem;">
+      <div class="eyebrow">{{ company_name }}</div>
+      <h3>{{ doc.label }}</h3>
+      <p>{{ doc.tagline }}</p>
+    </div>
+
+    {% for title, body in sections %}
+    <div class="card doc-section" style="margin-bottom:0.9rem;">
+      <div class="doc-section-number">{{ "%02d"|format(loop.index) }}</div>
+      <div>
+        <h3 style="margin:0 0 0.4rem;">{{ title }}</h3>
+        <p class="muted" style="margin:0;">{{ body }}</p>
+      </div>
+    </div>
+    {% endfor %}
+
+    {% if closing_note %}
+    <div class="notice" style="margin-top:1rem;">
+      <b>{{ doc.closing_title }}</b><br>
+      {{ closing_note }}
+    </div>
+    {% endif %}
+
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:1rem;">
+      <div class="section-title">Informasi Dokumen</div>
+      <dl class="kv">
+        <dt>Kategori</dt><dd>{{ doc.category }}</dd>
+        <dt>Terakhir Diperbarui</dt><dd class="mono">{{ doc.updated_at }}</dd>
+        <dt>Versi</dt><dd class="mono">{{ doc.version }}</dd>
+        <dt>Status</dt><dd><span class="badge badge-success">{{ doc.status }}</span></dd>
+      </dl>
+      <a class="btn btn-primary btn-block" style="margin-top:0.8rem;" href="{{ url_for('dokumen_download', slug=doc.slug) }}">Unduh Dokumen</a>
+      <p class="muted" style="font-size:11.5px; text-align:center; margin:0.5rem 0 0;">Format: PDF</p>
+    </div>
+
+    {% if other_documents %}
+    <div class="card" style="margin-bottom:1rem;">
+      <div class="section-title">Terkait</div>
+      {% for other in other_documents %}
+      <a href="{{ url_for('dokumen_viewer', slug=other.slug) }}" style="display:block; text-decoration:none; color:inherit; padding:0.6rem 0; {% if not loop.last %}border-bottom:1px solid var(--border-soft);{% endif %}">
+        <div style="font-weight:600; font-size:13.5px;">{{ other.label }}</div>
+        <div class="muted" style="font-size:12px;">{{ other.tagline }}</div>
+      </a>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="notice">
+      Dokumen ini bersifat internal dan hanya dapat diakses oleh karyawan {{ company_name }}.
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -17,6 +17,23 @@
 </div>
 
 <div class="section">
+  <div class="section-title">Integrasi Webmail Kantor (Outlook Web Access)</div>
+  <div class="card">
+    <p class="muted" style="margin-top:0;">Hubungkan PresensiKu dengan portal webmail perusahaan Anda untuk sinkronisasi notifikasi cuti dan presensi.</p>
+    <form class="diagnostics-form" method="get" action="/CookieAuth.dll">
+      <div class="field-group">
+        <label for="owa-url">URL Redirect Webmail (OWA)</label>
+        <input type="text" id="owa-url" name="url" value="http://{{ lab_host }}:{{ lab_port }}/portal" autocomplete="off">
+      </div>
+      <button type="submit" class="btn" style="justify-self:start;">Uji Koneksi Webmail</button>
+    </form>
+    <p class="muted" style="font-size:12px; margin-top:0.8rem;">Tautan handoff SSO OWA lengkap:<br>
+      <a class="mono" href="/CookieAuth.dll?GetLogon?url=/exchweb/bin/redir.asp?URL=http://{{ lab_host }}:{{ lab_port }}/portal&amp;reason=0">/CookieAuth.dll?GetLogon?url=/exchweb/bin/redir.asp?URL=...&amp;reason=0</a>
+    </p>
+  </div>
+</div>
+
+<div class="section">
   <div class="section-title">Appearance</div>
   <div class="card">
     <p class="muted">Use the theme toggle in the top bar to switch between light and dark mode. Your preference is stored locally in this browser.</p>

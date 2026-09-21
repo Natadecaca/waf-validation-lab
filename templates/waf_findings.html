@@ -33,10 +33,10 @@
 
 <div class="section" style="margin-top:1.6rem;">
   <div class="section-title">WAF Request Pattern vs. Local Evidence</div>
-  <p class="muted">The laboratory endpoint, parameter name, and request structure intentionally match the finalized WAF evidence and can be replayed byte-for-byte, directly in the browser. Each finding exposes a distinct controlled resource on disk.</p>
+  <p class="muted">For VAL-CMD-001, VAL-LFI-001, VAL-TRAV-001, VAL-SQLI-001 and VAL-XSS-001, the laboratory endpoint, parameter name, and request structure intentionally match the finalized WAF evidence and can be replayed byte-for-byte, directly in the browser — VAL-SQLI-001's vulnerable query layer selects exactly 32 columns and balances parentheses generically so the exact, unmodified SP_PAM-047 UNION payload executes natively, with no scaled-down substitute. VAL-SSRF-001 and VAL-UPLOAD-001 preserve the original WAF request pattern for correlation but use an appropriately-scaled laboratory test (a loopback-only target and a Python script in place of the original JSP file, respectively) to reproduce the same underlying vulnerability safely — see each finding's Validation Detail page for the distinction. Each finding exposes a distinct controlled resource.</p>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>WAF Reference</th><th>WAF Request Pattern</th><th>Local Evidence Path</th><th>Validation</th></tr></thead>
+      <thead><tr><th>WAF Reference</th><th>WAF Request Pattern</th><th>Evidence Target</th><th>Validation</th></tr></thead>
       <tbody>
         {% for vid in validation_order %}
         {% set v = validation_defs[vid] %}
@@ -76,6 +76,28 @@
   <div class="notice" style="margin-top:0.8rem;"><b>{{ vid }}:</b> {{ v.waf_note }}</div>
   {% endif %}
   {% endfor %}
+</div>
+
+<div class="section" style="margin-top:1.6rem;">
+  <div class="section-title">Final Validation Table — WAF Event &rarr; Laboratory Scenario &rarr; Discovery &rarr; Validation &rarr; Evidence</div>
+  <p class="muted">Each row traces one finding across the full pipeline: the original WAF event, the laboratory scenario that reproduces it, how it was independently discovered, how it was validated, and where its evidence lives.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>WAF Event</th><th>Laboratory Scenario</th><th>Discovery</th><th>Validation</th><th>Evidence</th></tr></thead>
+      <tbody>
+        {% for vid in validation_order %}
+        {% set v = validation_defs[vid] %}
+        <tr>
+          <td class="mono">{{ v.waf_reference }}</td>
+          <td><a href="{{ url_for('validation_detail', validation_id=vid) }}">{{ vid }}</a> &mdash; {{ v.title }}</td>
+          <td class="mono">{{ v.endpoint }}{% if v.param %}?{{ v.param }}={% endif %}</td>
+          <td><span class="badge badge-success">VALIDATED</span></td>
+          <td><a href="{{ url_for('evidence') }}">View Evidence</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 
 {% endblock %}

@@ -11,6 +11,7 @@
   {% if scenario.entries %}
     {% for e in scenario.entries %}
     <div class="card" style="margin-bottom:0.7rem;">
+      <div style="margin-bottom:0.5rem;"><span class="badge badge-neutral">POC EVIDENCE</span></div>
       <dl class="kv">
         <dt>Validation ID</dt><dd>{{ scenario.id }}</dd>
         <dt>Timestamp</dt><dd class="mono">{{ e.timestamp }}</dd>
@@ -18,12 +19,40 @@
         <dt>HTTP Method</dt><dd class="mono">{{ e.method }}</dd>
         <dt>Endpoint</dt><dd class="mono">{{ e.endpoint }}</dd>
         <dt>Input</dt><dd class="mono">{{ e.input }}</dd>
+        {% if e.sql %}<dt>SQL Query Executed</dt><dd class="mono">{{ e.sql }}</dd>{% endif %}
+        {% if e.result_sample %}<dt>Database Result</dt><dd class="mono">{{ e.result_sample }}</dd>{% endif %}
+        {% if e.sqlite_error %}<dt>SQLite Error</dt><dd class="mono" style="color:var(--danger);">{{ e.sqlite_error }}</dd>{% endif %}
+        {% if e.result_columns %}
+        <dt>Returned Columns</dt><dd class="mono">{{ e.result_column_count }}</dd>
+        <dt>Union Result Detected</dt>
+        <dd>{% if e.union_detected %}<span class="badge badge-success">Yes</span>{% else %}<span class="badge badge-neutral">No</span>{% endif %}</dd>
+        <dt>Database Result &mdash; Raw Result Set</dt>
+        <dd>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Column</th><th>Value</th></tr></thead>
+              <tbody>
+                {% for col_num, val in e.result_columns %}
+                <tr>
+                  <td class="mono">Column {{ col_num }}</td>
+                  <td class="mono">{{ val }}{% if col_num == 12 and val == "fcoum" %} <span class="badge badge-success">unhex('66636f756d')</span>{% endif %}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </dd>
+        {% if e.result_json %}
+        <dt>Structured Representation (JSON)</dt>
+        <dd><pre class="evidence">{{ e.result_json }}</pre></dd>
+        {% endif %}
+        {% endif %}
         <dt>Observed Behavior</dt><dd>{{ e.behavior }}</dd>
         <dt>Validation Status</dt>
         <dd>
-          {% if e.status in ("EXECUTED", "FILE_READ", "TRAVERSAL_READ") %}
+          {% if e.status in ("EXECUTED", "FILE_READ", "TRAVERSAL_READ", "QUERY_EXECUTED", "FETCHED", "SCRIPT_EXECUTED", "ACCEPTED", "REFLECTED") %}
             <span class="badge badge-success">{{ e.status }}</span>
-          {% elif e.status == "NO_INPUT" %}
+          {% elif e.status in ("NO_INPUT", "NO_MATCH") %}
             <span class="badge badge-neutral">{{ e.status }}</span>
           {% else %}
             <span class="badge badge-danger">{{ e.status }}</span>

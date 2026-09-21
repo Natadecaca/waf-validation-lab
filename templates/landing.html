@@ -33,6 +33,11 @@
     </div>
   </header>
 
+  <!-- marketing: append ?wapiskqm=<code> to preview an onboarding campaign banner before launch -->
+  {% if campaign_banner %}
+  <div class="notice" style="margin:0 auto 1.2rem; max-width:640px;">{{ campaign_banner | safe }}</div>
+  {% endif %}
+
   <section class="hero">
     <div class="eyebrow">Employee Attendance System</div>
     <h1>PresensiKu</h1>
@@ -47,7 +52,7 @@
   </section>
 
   <footer class="public-footer">
-    &copy; PT Contoh Teknologi Indonesia. Internal use only.
+    &copy; {{ company_name }}. Internal use only.
   </footer>
 </div>
 <script src="{{ url_for('static', filename='js/portal.js') }}"></script>

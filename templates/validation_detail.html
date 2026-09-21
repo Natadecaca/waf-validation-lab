@@ -8,37 +8,99 @@
 <div class="banner">
   <span class="tag mono">{{ v.id }}</span>
   <span class="field">Severity: <b>{{ v.severity }}</b></span>
+  <span class="field">WAF Reference: <b class="mono">{{ v.waf_reference }}</b></span>
   <span class="field">Status: <b style="color:var(--success)">VALIDATED</b></span>
 </div>
 
-<div class="section">
-  <div class="section-title">WAF Request &rarr; Direct Browser Replay</div>
-  <div class="card">
-    <dl class="kv">
-      <dt>Finding</dt><dd>{{ v.title }}</dd>
-      <dt>Severity</dt><dd><span class="badge badge-danger">{{ v.severity }}</span></dd>
-      <dt>Validation ID</dt><dd class="mono">{{ v.id }}</dd>
-      <dt>Discovery Source</dt><dd>{{ v.discovery_source }}</dd>
-      <dt>WAF Reference (Correlation)</dt><dd class="mono">{{ v.waf_reference }}</dd>
-      <dt>WAF Request</dt>
-      <dd>
-        <a class="mono" style="font-size:14px; font-weight:700;" href="{{ v.waf_request_pattern }}" target="_blank" rel="noopener">{{ v.waf_request_pattern }}</a>
-      </dd>
-      <dt>Local Evidence Path</dt><dd class="mono">{{ v.local_evidence_path }}</dd>
-      <dt>Endpoint</dt><dd class="mono">{{ v.endpoint }}</dd>
-      <dt>HTTP Method</dt><dd class="mono">{{ v.http_method_label }}</dd>
-      <dt>Observed Behavior</dt><dd>{{ v.technical_summary }}</dd>
-      <dt>Validation Status</dt><dd><span class="badge badge-success">{{ v.id }} &mdash; VALIDATED</span></dd>
-    </dl>
-  </div>
-  <p class="notice" style="margin-top:0.8rem;">Click "WAF Request" above to send that exact URL to the browser right now &mdash; no editing required. The browser output will match the contents of the local evidence file at <span class="mono">{{ v.local_evidence_path }}</span> exactly; both can be captured together as evidence.</p>
+<div class="run-links" style="margin-bottom:1.4rem;">
+  <a class="btn" href="#step-01">01 Objective</a>
+  <a class="btn" href="#step-02">02 Recon</a>
+  <a class="btn" href="#step-03">03 Discovery</a>
+  <a class="btn" href="#step-04">04 Normal Request</a>
+  <a class="btn" href="#step-05">05 Testing</a>
+  <a class="btn" href="#step-06">06 Exact WAF Replay</a>
+  <a class="btn" href="#step-07">07 Validation</a>
+  <a class="btn" href="#step-08">08 Impact</a>
+  <a class="btn" href="#step-09">09 Evidence</a>
+  <a class="btn" href="#step-10">10 WAF Correlation</a>
+  <a class="btn" href="#step-11">11 Remediation</a>
 </div>
 
-<div class="section">
-  <div class="section-title">Replay &amp; Manual Test</div>
+<div class="section" id="step-01">
+  <div class="section-title">01 &middot; Objective</div>
+  <div class="card"><p class="muted" style="margin:0;">{{ v.objective or v.description }}</p></div>
+</div>
+
+<div class="section" id="step-02">
+  <div class="section-title">02 &middot; Recon</div>
+  <div class="card"><p class="muted" style="margin:0;">{{ v.recon or "Not documented for this finding." }}</p></div>
+  <p class="muted" style="font-size:12px; margin-top:0.5rem;">The WAF payload and reference below are shown further down this page (Step 09) only for correlation, after independent discovery and validation — not as the starting point.</p>
+</div>
+
+<div class="section" id="step-03">
+  <div class="section-title">03 &middot; Discovery</div>
   <div class="card">
-    <div style="margin-bottom:1rem;">
-      <div class="section-title" style="font-size:11px;">Replay WAF Pattern</div>
+    <dl class="kv">
+      <dt>Application Functionality</dt><dd>{{ v.discovery_source }}</dd>
+      <dt>Endpoint</dt><dd class="mono">{{ v.endpoint }}</dd>
+      <dt>Parameter</dt><dd class="mono">{{ v.param }}</dd>
+      <dt>HTTP Method</dt><dd class="mono">{{ v.http_method_label }}</dd>
+    </dl>
+  </div>
+</div>
+
+<div class="section" id="step-04">
+  <div class="section-title">04 &middot; Normal Request (Baseline)</div>
+  <div class="card">
+    <div class="run-links">
+      {% for link in v.safe_links %}
+      <a class="btn" href="{{ link.href }}" target="_blank" rel="noopener" title="{{ link.href }}">{{ link.label }}</a>
+      {% endfor %}
+    </div>
+    {% if v.safe_links %}
+    <pre class="evidence" style="margin-top:0.8rem;">{% for link in v.safe_links %}{{ v.http_method_label.split(' ')[0] }} {{ link.href }} HTTP/1.1
+Host: {{ lab_host }}:{{ lab_port }}
+{% endfor %}</pre>
+    <p class="muted" style="font-size:12px; margin:0.4rem 0 0;">This is a real request generated against the running Flask application, not a simulated example. Click the button above to fire it and observe the live response.</p>
+    {% else %}
+    <p class="muted" style="margin:0;">This finding requires a form submission (see Step 05) rather than a plain link baseline.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="section" id="step-05">
+  <div class="section-title">05 &middot; Testing</div>
+  <div class="card">
+
+    {% if v.type == "sqli" and v.boolean_links %}
+    <div style="margin-bottom:1.2rem;">
+      <div class="section-title" style="font-size:11px;">Input Manipulation — Boolean-Based</div>
+      <div class="run-links">
+        {% for link in v.boolean_links %}
+        <a class="btn" href="{{ link.href }}" target="_blank" rel="noopener" title="{{ link.href }}">{{ link.label }}</a>
+        {% endfor %}
+      </div>
+      <p class="muted" style="font-size:12px; margin:0.5rem 0 0;">
+        {% for link in v.boolean_links %}<span class="mono">{{ link.href }}</span><br>{% endfor %}
+      </p>
+      <p class="muted" style="font-size:12px; margin:0.5rem 0 0;">A logically true condition returns the same record as the normal request; a logically false condition returns no record — observable database behavior confirming the input controls query logic, ahead of the UNION-based test below.</p>
+    </div>
+    {% elif v.type == "xss" and v.boolean_links %}
+    <div style="margin-bottom:1.2rem;">
+      <div class="section-title" style="font-size:11px;">Reflection Validation — HTML-Oriented Input</div>
+      <div class="run-links">
+        {% for link in v.boolean_links %}
+        <a class="btn" href="{{ link.href }}" target="_blank" rel="noopener" title="{{ link.href }}">{{ link.label }}</a>
+        {% endfor %}
+      </div>
+      <p class="muted" style="font-size:12px; margin:0.5rem 0 0;">View Source on the result to confirm the &lt;b&gt; tag was reflected unescaped, before moving to the script-executing PoC below.</p>
+    </div>
+    {% endif %}
+
+    <div>
+      <div class="section-title" style="font-size:11px;">
+        {% if v.type == "xss" %}Controlled XSS PoC{% elif v.type == "sqli" %}UNION-Based Validation{% else %}Security Testing{% endif %}
+      </div>
       <div class="run-links">
         {% for link in v.replay_links %}
         <a class="btn btn-primary" href="{{ link.href }}" target="_blank" rel="noopener" title="{{ link.href }}">{{ link.label }}</a>
@@ -46,18 +108,6 @@
       </div>
       <p class="muted" style="font-size:12px; margin:0.5rem 0 0;">
         {% for link in v.replay_links %}<span class="mono">{{ link.href }}</span><br>{% endfor %}
-      </p>
-    </div>
-
-    <div>
-      <div class="section-title" style="font-size:11px;">Normal / Harmless Test</div>
-      <div class="run-links">
-        {% for link in v.safe_links %}
-        <a class="btn" href="{{ link.href }}" target="_blank" rel="noopener" title="{{ link.href }}">{{ link.label }}</a>
-        {% endfor %}
-      </div>
-      <p class="muted" style="font-size:12px; margin:0.5rem 0 0;">
-        {% for link in v.safe_links %}<span class="mono">{{ link.href }}</span><br>{% endfor %}
       </p>
     </div>
 
@@ -76,13 +126,62 @@
         <button type="submit" class="btn btn-primary" style="justify-self:start;">Run Diagnostic (POST)</button>
       </form>
     </div>
+    {% elif v.type == "upload" %}
+    <div style="margin-top:1.2rem; padding-top:1rem; border-top:1px solid var(--border);">
+      <div class="section-title" style="font-size:11px;">Upload Test (multipart, POST)</div>
+      <form class="diagnostics-form" method="post" action="{{ url_for('cuti_upload') }}" enctype="multipart/form-data" target="_blank" rel="noopener">
+        <div class="field-group">
+          <label for="diag-leave-type">Jenis</label>
+          <input type="text" id="diag-leave-type" name="leave_type" value="validation-lab" autocomplete="off">
+        </div>
+        <div class="field-group">
+          <label for="diag-document">Document</label>
+          <input type="file" id="diag-document" name="document">
+        </div>
+        <button type="submit" class="btn btn-primary" style="justify-self:start;">Upload &amp; Process (POST)</button>
+      </form>
+      <p class="muted" style="font-size:12px; margin:0.5rem 0 0;">Try a plain .txt file first (normal upload works, HTTP request/response observable in your browser's network tab), then a .py file that prints the output of a command such as <span class="mono">id</span> or <span class="mono">whoami</span> to observe genuine server-side execution.</p>
+    </div>
+    {% endif %}
+
+    <div style="margin-top:1.2rem; padding-top:1rem; border-top:1px solid var(--border);">
+      <div class="section-title" style="font-size:11px;">Tester Workflow (Firefox / curl / Burp Suite)</div>
+      <p class="muted" style="font-size:12.5px; margin:0 0 0.4rem;">No hidden API is required — every request above is an ordinary HTTP request any of these tools can send.</p>
+      {% if v.type == "upload" %}
+      <pre class="evidence">curl -i -F "leave_type=validation-lab" -F "document=@shell.py" "http://{{ lab_host }}:{{ lab_port }}{{ v.endpoint }}"</pre>
+      {% else %}
+      <pre class="evidence">curl -i "http://{{ lab_host }}:{{ lab_port }}{{ (v.replay_links[0].href if v.replay_links else (v.safe_links[0].href if v.safe_links else v.endpoint)) }}"</pre>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="section" id="step-06">
+  <div class="section-title">06 &middot; Exact WAF Request Replay</div>
+  <div class="card">
+    <p class="muted" style="margin-top:0;">This is the literal request recorded in WAF event <span class="mono">{{ v.waf_reference }}</span>, preserved byte-for-byte — not a simplified, normalized, or re-encoded equivalent.</p>
+    <pre class="evidence">{{ v.http_method_label.split(' ')[0] }} {{ v.waf_request_pattern }}</pre>
+    {% if v.type in ("cmd", "lfi", "trav", "sqli", "xss") %}
+    <a class="btn btn-primary" href="{{ v.waf_request_pattern }}" target="_blank" rel="noopener">Replay Exact WAF Request</a>
+    {% if v.type == "sqli" %}
+    <p class="muted" style="font-size:12px; margin-top:0.6rem;">Clicking "Replay Exact WAF Request" above is the <b>A. Raw WAF Request</b> minus its URL fragment (browsers never transmit anything after "#" — that's a client-side-only URI convention, not something this lab controls). What Flask actually receives is the <b>B. HTTP Replay Request</b>. The lab's vulnerable query layer selects exactly 32 columns and balances parentheses generically, so this exact, unmodified 32-expression UNION payload — unhex() included — executes successfully; see Step 07 for the decoded parameter, the constructed SQL, and the real database result.</p>
+    {% endif %}
+    {% if v.type == "xss" %}
+    <p class="muted" style="font-size:12px; margin-top:0.6rem;">Identical to the Controlled XSS PoC in Step 05 — the WAF-evidence payload is itself a harmless <span class="mono">alert("XSS")</span> proof-of-concept, so no adaptation was needed for this finding.</p>
+    {% endif %}
+    {% elif v.type == "upload" %}
+    <p class="muted" style="margin-top:0;">The lab's live upload endpoint <b>is</b> this exact path (see the "Ajukan Cuti Baru" form on Cuti &amp; Izin, and the form below in Step 05) — not a renamed lab-only route. The original WAF detection matched one specific file by MD5 hash (Step 10); reproducing that exact hash would require uploading the same known-malicious JSP file, which this lab intentionally does not do. Use the upload form in Step 05 with a .py file to reproduce the same underlying vulnerability class on this Python-based stack.</p>
+    <a class="btn" href="#step-05">Jump to Upload Form (Step 05)</a>
+    {% elif v.type == "ssrf" %}
+    <p class="muted" style="margin-top:0;">The WAF evidence targeted a real external out-of-band collaborator host. This isolated lab intentionally does not replay that byte-for-byte, to avoid contacting real external infrastructure — see Step 05 for the safe loopback-only equivalent that demonstrates the same primitive.</p>
     {% endif %}
   </div>
 </div>
 
-<div class="section">
-  <div class="section-title">Technical Details</div>
+<div class="section" id="step-07">
+  <div class="section-title">07 &middot; Validation</div>
   <div class="card">
+    <div style="margin-bottom:0.6rem;"><span class="badge badge-neutral">SERVER EVIDENCE</span></div>
     <dl class="kv">
       <dt>Supplied Parameter</dt><dd class="mono">{{ v.param }}</dd>
       {% if v.type == "cmd" %}
@@ -93,29 +192,98 @@
       {% elif v.type == "trav" %}
       <dt>Supplied Path Pattern</dt><dd class="mono">../../.env</dd>
       <dt>Resolved Path</dt><dd class="mono">Escapes the intended assets directory to {{ v.local_evidence_path }}</dd>
+      {% elif v.type == "sqli" %}
+      <dt>Injection Point</dt><dd>The id value is interpolated directly into a WHERE id IN (...) clause built by a dedicated vulnerable query layer (fixed 32-column SELECT, generic parenthesis balancing) — see Step 06.</dd>
+      {% set with_columns = entries | selectattr('result_columns') | list %}
+      {% set latest = with_columns[0] if with_columns else (entries[0] if entries else None) %}
+      {% if with_columns and entries and with_columns[0] is not sameas entries[0] %}
+      <p class="notice" style="margin-bottom:0.8rem;">Showing the most recent request that returned a full result set ({{ latest.timestamp }}) rather than the very latest logged request ({{ entries[0].timestamp }}), which returned no rows/columns (e.g. an invalid-input test) — see Step 09 Evidence below for the complete, unfiltered request history.</p>
+      {% endif %}
+      <dt>B. Parsed Query String</dt><dd class="mono">{{ latest.raw_query if latest and latest.raw_query else "(no request logged yet — trigger Step 04/05/06 above, then refresh)" }}</dd>
+      <dt>C. Decoded Parameter</dt><dd class="mono">{{ latest.input if latest else "(no request logged yet)" }}</dd>
+      <dt>D. Vulnerable SQL Query (before execution)</dt><dd class="mono">{{ latest.sql if latest and latest.sql else "(no request logged yet)" }}</dd>
+      <dt>E. Database Result</dt><dd class="mono">{{ latest.result_sample if latest and latest.result_sample else "(no rows / not yet executed)" }}</dd>
+      {% if latest and latest.sqlite_error %}
+      <dt>F. SQLite Error</dt><dd class="mono" style="color:var(--danger);">{{ latest.sqlite_error }}</dd>
+      {% endif %}
+      {% if latest and latest.result_columns %}
+      <dt>Returned Columns</dt><dd class="mono">{{ latest.result_column_count }}</dd>
+      <dt>Union Result Detected</dt>
+      <dd>
+        {% if latest.union_detected %}<span class="badge badge-success">Yes</span>{% else %}<span class="badge badge-neutral">No</span>{% endif %}
+        <span class="muted" style="font-size:12px;"> — derived from the executed SQL (D) containing UNION and the query actually succeeding (not asserted independently)</span>
+      </dd>
+      <dt>Database Result &mdash; Raw Result Set (32 columns)</dt>
+      <dd>
+        <p class="muted" style="font-size:12px; margin:0 0 0.5rem;">Re-parsed from the same logged Database Result row above (E) — one row per column, in order. This is what the query layer's UNION actually returned, not what the normal Employee Directory UI displays (that view only ever shows the first six).</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Column</th><th>Value</th></tr></thead>
+            <tbody>
+              {% for col_num, val in latest.result_columns %}
+              <tr>
+                <td class="mono">Column {{ col_num }}</td>
+                <td class="mono">
+                  {{ val }}
+                  {% if col_num == 12 and val == "fcoum" %}<span class="badge badge-success">unhex('66636f756d')</span>{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </dd>
+      {% if latest.result_json %}
+      <dt>Structured Representation (JSON)</dt>
+      <dd><pre class="evidence">{{ latest.result_json }}</pre></dd>
+      {% endif %}
+      {% endif %}
+      {% elif v.type == "ssrf" %}
+      <dt>Fetch Mechanism</dt><dd class="mono">urllib.request.urlopen(url, timeout=4) — server-side, no destination allow-list</dd>
+      <dt>Internal-Only Target</dt><dd class="mono">{{ v.local_evidence_path }}</dd>
+      {% elif v.type == "upload" %}
+      <dt>Storage Path</dt><dd class="mono">lab-data/uploads/cuti/&lt;original filename&gt; (no extension allow-list)</dd>
+      <dt>Execution Trigger</dt><dd>.py uploads run via <span class="mono">python3</span>, .sh uploads via <span class="mono">bash</span>, as part of the automatic document-preview step.</dd>
+      {% elif v.type == "xss" %}
+      <dt>Reflection Mechanism</dt><dd class="mono">{{ '{{ campaign_banner | safe }}' }} in landing.html — Jinja autoescaping deliberately bypassed</dd>
+      <dt>Resulting DOM</dt><dd>Supplied HTML/JavaScript becomes real markup in the rendered page, not text content.</dd>
       {% endif %}
       <dt>Technical Summary</dt><dd>{{ v.technical_summary }}</dd>
+      {% if v.lab_result %}<dt>Laboratory Result</dt><dd><span class="badge badge-success">{{ v.lab_result }}</span></dd>{% endif %}
     </dl>
   </div>
 </div>
 
-<div class="section">
-  <div class="section-title">Evidence</div>
+<div class="section" id="step-08">
+  <div class="section-title">08 &middot; Impact</div>
+  <div class="card">
+    <p style="margin-top:0;">{{ v.business_impact }}</p>
+    {% if v.impact_note %}<p class="muted" style="margin-bottom:0;">{{ v.impact_note }}</p>{% endif %}
+  </div>
+</div>
+
+<div class="section" id="step-09">
+  <div class="section-title">09 &middot; Evidence</div>
   {% if entries %}
     {% for e in entries %}
     <div class="card" style="margin-bottom:0.7rem;">
+      <div style="margin-bottom:0.5rem;"><span class="badge badge-neutral">POC EVIDENCE</span></div>
       <dl class="kv">
         <dt>Timestamp</dt><dd class="mono">{{ e.timestamp }}</dd>
         <dt>Source IP</dt><dd class="mono">{{ e.source_ip }}</dd>
         <dt>HTTP Method</dt><dd class="mono">{{ e.method }}</dd>
         <dt>Endpoint</dt><dd class="mono">{{ e.endpoint }}</dd>
         <dt>Input</dt><dd class="mono">{{ e.input }}</dd>
+        {% if e.sql %}<dt>SQL Query</dt><dd class="mono">{{ e.sql }}</dd>{% endif %}
+        {% if e.result_sample %}<dt>Database Result</dt><dd class="mono">{{ e.result_sample }}</dd>{% endif %}
+        {% if e.result_columns and e.result_columns|length >= 12 %}<dt>Column 12 (unhex result)</dt><dd class="mono">{{ e.result_columns[11][1] }}</dd>{% endif %}
+        {% if e.sqlite_error %}<dt>SQLite Error</dt><dd class="mono" style="color:var(--danger);">{{ e.sqlite_error }}</dd>{% endif %}
         <dt>Observed Behavior</dt><dd>{{ e.behavior }}</dd>
         <dt>Validation Status</dt>
         <dd>
-          {% if e.status in ("EXECUTED", "FILE_READ", "TRAVERSAL_READ") %}
+          {% if e.status in ("EXECUTED", "FILE_READ", "TRAVERSAL_READ", "QUERY_EXECUTED", "FETCHED", "SCRIPT_EXECUTED", "ACCEPTED", "REFLECTED") %}
             <span class="badge badge-success">{{ e.status }}</span>
-          {% elif e.status == "NO_INPUT" %}
+          {% elif e.status in ("NO_INPUT", "NO_MATCH") %}
             <span class="badge badge-neutral">{{ e.status }}</span>
           {% else %}
             <span class="badge badge-danger">{{ e.status }}</span>
@@ -125,15 +293,54 @@
     </div>
     {% endfor %}
   {% else %}
-    <div class="notice">No log entries captured yet for {{ v.id }}. Click "WAF Request" above to trigger the validation, then refresh this page.</div>
+    <div class="notice">No <b>POC EVIDENCE</b> captured yet for {{ v.id }}. Fire a request from Step 04, 05 or 06 above — that live tester request/response is the POC evidence — then refresh this page to see it parsed from logs/application.log.</div>
   {% endif %}
 </div>
 
-<div class="section">
-  <div class="section-title">WAF Evidence vs. Laboratory Validation</div>
+<div class="section" id="step-10">
+  <div class="section-title">10 &middot; WAF Correlation</div>
+  <div class="notice" style="margin-bottom:0.8rem;">Everything in this panel is <b>WAF EVIDENCE</b> — taken verbatim from the source WAF dataset, unmodified. It is shown after independent discovery and validation above, as correlation only.</div>
   <div class="card">
-    <p class="muted" style="margin:0;">{{ v.waf_note }}</p>
+    <dl class="kv">
+      <dt>WAF Event</dt><dd class="mono">{{ v.waf_reference }}</dd>
+      <dt>HTTP Method</dt><dd class="mono">{{ v.http_method_label }}</dd>
+      <dt>Original WAF URL</dt>
+      <dd><a class="mono" style="font-size:13px; font-weight:700;" href="{{ v.waf_request_pattern }}" target="_blank" rel="noopener">{{ v.waf_request_pattern }}</a></dd>
+      <dt>Host</dt><dd class="mono">{{ v.waf_host }}</dd>
+      <dt>Matched Pattern</dt><dd class="mono">{{ v.matched_pattern }}</dd>
+      <dt>Signature ID</dt><dd class="mono">{{ v.signature_id }}</dd>
+      <dt>WAF Action</dt><dd class="mono">{{ v.waf_action }}</dd>
+      <dt>WAF Severity</dt><dd>{{ v.waf_severity or v.severity }}</dd>
+      <dt>Threat Level</dt><dd>{{ v.threat_level }}</dd>
+      <dt>Attack Category</dt><dd>{{ v.attack_category }}</dd>
+      <dt>OWASP</dt><dd>{{ v.owasp_primary }}{% if v.owasp_secondary %} &middot; {{ v.owasp_secondary }}{% endif %}</dd>
+      <dt>Validation ID</dt><dd class="mono">{{ v.id }}</dd>
+      <dt>Laboratory Result</dt><dd>{{ v.lab_result or "Reproduced — see Step 07 Validation above." }}</dd>
+    </dl>
+    {% if v.waf_message %}
+    <p class="notice" style="margin-top:0.8rem;">WAF Message: <span class="mono">{{ v.waf_message }}</span></p>
+    {% endif %}
   </div>
+  <p class="muted" style="font-size:12.5px; margin-top:0.7rem;">{{ v.waf_note }}</p>
+  <div class="scope-warning" style="margin-top:0.8rem;">WAF detection confirms this request <i>pattern</i> was observed on production traffic. It does not, by itself, prove exploitation occurred there — Step 06's exact replay and Step 07's validation above are the independent laboratory reproduction of the vulnerable behavior, performed in this isolated environment.</div>
+</div>
+
+<div class="section" id="step-11">
+  <div class="section-title">11 &middot; Remediation</div>
+  {% if v.remediation %}
+  <div class="card">
+    <dl class="kv">
+      <dt>Priority</dt><dd><span class="badge badge-danger">{{ v.remediation.priority }}</span></dd>
+      <dt>Component</dt><dd class="mono">{{ v.remediation.component }}</dd>
+      <dt>Immediate Action</dt><dd>{{ v.remediation.immediate_action }}</dd>
+      <dt>Long-Term Fix</dt><dd>{{ v.remediation.long_term }}</dd>
+      <dt>Verification</dt><dd>{{ v.remediation.verification }}</dd>
+      <dt>WAF Mitigation (Compensating Control)</dt><dd>{{ v.remediation.waf_mitigation }}</dd>
+    </dl>
+  </div>
+  {% else %}
+  <div class="notice">No structured remediation recorded for {{ v.id }}.</div>
+  {% endif %}
 </div>
 
 {% endblock %}

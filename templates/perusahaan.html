@@ -30,7 +30,7 @@
     <p class="muted" style="margin-top:0;">Dokumen internal yang dapat diakses karyawan.</p>
     <ul style="margin:0; padding-left:1.1rem;">
       {% for doc in documents %}
-      <li><a href="/api/file?path={{ doc.filename }}">{{ doc.label }}</a></li>
+      <li><a href="{{ url_for('dokumen_viewer', slug=doc.slug) }}">{{ doc.label }}</a></li>
       {% endfor %}
     </ul>
   </div>

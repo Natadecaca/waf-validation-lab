@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Direktori Karyawan{% endblock %}
+{% block page_title %}Direktori Karyawan{% endblock %}
+{% block page_subtitle %}Cari dan lihat detail data karyawan{% endblock %}
+
+{% block content %}
+
+<div class="section">
+  <div class="section-title">Cari Berdasarkan ID Karyawan</div>
+  <div class="card" style="max-width:420px;">
+    <form class="diagnostics-form" method="get" action="/search/members/">
+      <div class="field-group">
+        <label for="member-id">ID</label>
+        <input type="text" id="member-id" name="id" value="1" autocomplete="off">
+      </div>
+      <button type="submit" class="btn" style="justify-self:start;">Cari</button>
+    </form>
+  </div>
+</div>
+
+<div class="section">
+  <div class="section-title">Semua Karyawan</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>ID</th><th>ID Karyawan</th><th>Nama</th><th>Jabatan</th><th>Departemen</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for m in members %}
+        <tr>
+          <td class="mono">{{ m[0] }}</td>
+          <td class="mono">{{ m[1] }}</td>
+          <td>{{ m[2] }}</td>
+          <td>{{ m[3] }}</td>
+          <td>{{ m[4] }}</td>
+          <td><a href="/search/members/?id={{ m[0] }}">Lihat Detail</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% endblock %}

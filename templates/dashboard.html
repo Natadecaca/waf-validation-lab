@@ -49,9 +49,9 @@
           <td class="mono">{{ e.source_ip }}</td>
           <td class="mono">{{ e.method }}</td>
           <td>
-            {% if e.status in ("EXECUTED", "FILE_READ", "TRAVERSAL_READ") %}
+            {% if e.status in ("EXECUTED", "FILE_READ", "TRAVERSAL_READ", "QUERY_EXECUTED", "FETCHED", "SCRIPT_EXECUTED", "ACCEPTED", "REFLECTED") %}
               <span class="badge badge-success">{{ e.status }}</span>
-            {% elif e.status == "NO_INPUT" %}
+            {% elif e.status in ("NO_INPUT", "NO_MATCH") %}
               <span class="badge badge-neutral">{{ e.status }}</span>
             {% else %}
               <span class="badge badge-danger">{{ e.status }}</span>

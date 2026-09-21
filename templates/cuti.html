@@ -13,6 +13,23 @@
 </div>
 
 <div class="section">
+  <div class="section-title">Ajukan Cuti Baru</div>
+  <div class="card" style="max-width:480px;">
+    <form class="diagnostics-form" method="post" action="{{ url_for('cuti_upload') }}" enctype="multipart/form-data" target="_blank" rel="noopener">
+      <div class="field-group">
+        <label for="leave-type">Jenis</label>
+        <input type="text" id="leave-type" name="leave_type" value="Izin Sakit" autocomplete="off">
+      </div>
+      <div class="field-group">
+        <label for="leave-doc">Upload Surat Keterangan (PDF/JPG)</label>
+        <input type="file" id="leave-doc" name="document">
+      </div>
+      <button type="submit" class="btn" style="justify-self:start;">Ajukan &amp; Upload Dokumen</button>
+    </form>
+  </div>
+</div>
+
+<div class="section">
   <div class="section-title">Riwayat Pengajuan</div>
   <div class="table-wrap">
     <table>

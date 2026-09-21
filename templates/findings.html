@@ -16,8 +16,9 @@
     <dt>Status</dt><dd><span class="badge badge-success">Validated</span></dd>
     <dt>Discovery Source</dt><dd>{{ v.discovery_source }}</dd>
     <dt>WAF Reference (Correlation)</dt><dd class="mono">{{ v.waf_reference }}</dd>
+    {% if v.owasp_primary %}<dt>OWASP</dt><dd>{{ v.owasp_primary }}{% if v.owasp_secondary %} &middot; {{ v.owasp_secondary }}{% endif %}</dd>{% endif %}
     <dt>WAF Request Pattern</dt><dd class="mono">{{ v.waf_request_pattern }}</dd>
-    <dt>Local Evidence Path</dt><dd class="mono">{{ v.local_evidence_path }}</dd>
+    <dt>Evidence Target</dt><dd class="mono">{{ v.local_evidence_path }}</dd>
     <dt>Affected Endpoint</dt><dd class="mono">{{ v.http_method_label }} {{ v.endpoint_label }}</dd>
     <dt>Technical Summary</dt><dd>{{ v.technical_summary }}</dd>
     <dt>Business Impact</dt><dd>{{ v.business_impact }}</dd>

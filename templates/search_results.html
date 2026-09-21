@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Member Search</title>
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/drishtisec-logo.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/portal.css') }}">
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("drishtisec-theme");
+      if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+<div style="max-width:1600px; margin:2rem auto; padding:0 1.2rem;">
+  <h2 style="margin-bottom:0.2rem;">Member Search</h2>
+
+  {% if no_input %}
+  <div class="notice">Error: missing required parameter 'id'.</div>
+  {% elif error %}
+  <pre class="evidence" style="border-color:var(--danger); color:var(--danger);">{{ error }}</pre>
+  {% elif rows %}
+  <p class="muted" style="font-size:12.5px; margin:0 0 0.6rem;">{{ rows|length }} record(s) found. Scroll horizontally to see all fields.</p>
+  <div class="table-wrap" style="overflow-x:auto;">
+    <table style="white-space:nowrap;">
+      <thead><tr>{% for c in columns %}<th>{{ c }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>{% for val in row %}<td class="mono">{{ val if val is not none else "" }}</td>{% endfor %}</tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">No matching members.</p>
+  {% endif %}
+</div>
+</body>
+</html>
