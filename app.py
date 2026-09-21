@@ -11,14 +11,31 @@ never the primary navigation). Two nav contexts share one
 login/session/base.html shell; inject_portal_globals() picks between
 them from request.endpoint alone.
 
-Three intentionally vulnerable endpoints, each with a different
+Six intentionally vulnerable endpoints, each with a different
 finding, WAF-evidence-matched endpoint/parameter, and a genuinely
 DIFFERENT exposed resource (not a shared marker file) so their impact
 is easy to tell apart in a demo:
 
-  VAL-CMD-001  OS Command Injection   GET /admin/config?cmd=
-  VAL-LFI-001  Local File Inclusion   GET /read?file=
-  VAL-TRAV-001 Directory Traversal    GET /?file=
+  VAL-CMD-001    OS Command Injection            GET  /admin/config?cmd=
+  VAL-LFI-001    Local File Inclusion             GET  /read?file=
+  VAL-TRAV-001   Directory Traversal              GET  /?file=
+  VAL-SQLI-001   SQL Injection (UNION-based)      GET  /search/members/?id=
+  VAL-SSRF-001   Server-Side Request Forgery      GET  /CookieAuth.dll?url=
+  VAL-UPLOAD-001 Unrestricted File Upload/Shell   POST /defaultroot/upload/fileUpload.controller
+
+The three newer findings (SQLI/SSRF/UPLOAD) follow the same rules as
+the original three: no proof-marker files, no "if input looks like an
+attack, return canned output" branching. VAL-SQLI-001 runs the
+attacker-supplied value in a real SQL statement against a real
+in-process SQLite database (MEMBERS_DB). VAL-SSRF-001 performs a real
+server-side HTTP fetch (urllib.request) of the attacker-supplied URL;
+a second, genuinely separate Werkzeug service bound only to
+127.0.0.1:INTERNAL_SSRF_PORT stands in for an "internal-only" backend
+service, unreachable except through the vulnerable server's own
+outbound request. VAL-UPLOAD-001 saves the uploaded file with no
+extension allow-list and, for .py/.sh uploads, genuinely executes them
+via subprocess.run (same real-execution pattern as VAL-CMD-001) — the
+returned output is the real stdout/stderr of that execution.
 
 No proof-file substitution or string pattern-matching happens in this
 file. Each endpoint uses the attacker-supplied input completely
@@ -67,21 +84,31 @@ anywhere in the UI, matching a real leftover/undocumented admin
 endpoint found only by enumeration — exactly as in the source WAF
 evidence.
 
-WARNING: /admin/config, /read, and "/" (when a "file" parameter is
-supplied) are INTENTIONALLY VULNERABLE (OS command injection, local
-file inclusion, and directory traversal, respectively). All exist ONLY
-for controlled reproduction of WAF findings inside an isolated lab
+WARNING: /, /admin/config, /read, /api/file, /search/members/,
+/CookieAuth.dll, and /defaultroot/upload/fileUpload.controller are
+INTENTIONALLY VULNERABLE (reflected XSS, OS command injection, local
+file inclusion, directory traversal, SQL injection, SSRF, and
+unrestricted file upload, respectively). All exist ONLY for
+controlled reproduction of WAF findings inside an isolated lab
 network. Do not deploy this code anywhere else. Portal login
-intentionally does NOT gate these endpoints — they must remain
-directly testable.
+intentionally does NOT gate any of these seven endpoints — they must
+remain directly testable, even though each is discovered through a
+login-gated PresensiKu feature first (except / itself, which is
+public, matching the original WAF finding).
 """
+import ast
+import json
 import logging
 import os
 import re
+import sqlite3
 import subprocess
+import threading
+import urllib.request
 from datetime import datetime, timezone
 from functools import wraps
 from urllib.parse import unquote
+from xml.sax.saxutils import escape as _xml_escape
 
 from flask import (
     Flask, Response, abort, redirect, render_template, request, send_file,
@@ -171,6 +198,288 @@ LAB_HOST_ENV = os.environ.get("LAB_HOST", "192.168.200.128")
 LAB_PORT_ENV = os.environ.get("LAB_PORT", "8080")
 
 # --------------------------------------------------------------------
+# Company identity — single source of truth. Used throughout
+# COMPANY_INFO, employee seed data, templates (via
+# inject_portal_globals()), and the report/PDF generators, so the
+# normal-facing application never has to repeat these literals.
+# "DrishtiSec" (without "PT") remains the distinct security/assessment
+# brand used only on the shared logo and within /portal/security and
+# below — see the module docstring above.
+# --------------------------------------------------------------------
+COMPANY_NAME = "PT DrishtiSec"
+PRODUCT_NAME = "PresensiKu"
+COMPANY_DOMAIN = "drishtisec.corp"
+HR_EMAIL = f"hr@{COMPANY_DOMAIN}"
+
+# --------------------------------------------------------------------
+# VAL-SQLI-001 (/search/members/?id=). A real, in-process SQLite
+# database — not a mock and not string substitution.
+#
+# Two clearly separate tables:
+#
+#   "members" — the ordinary Direktori Karyawan feature's data (6
+#   realistic columns). Used ONLY by /portal/direktori's own listing
+#   query. Untouched by the vulnerable query layer below.
+#
+#   "sqli_members" — the DEDICATED table backing the vulnerable
+#   /search/members/ query layer, with exactly 32 realistic employee
+#   columns (contact/org/attendance/payroll fields), so SP_PAM-047's
+#   32-expression UNION SELECT lines up column-for-column against a
+#   real schema — no NULL padding, no forcing "members" into an
+#   unrealistic 32-column shape. Same synthetic 8-person roster as
+#   "members", just with the fuller HR-record shape a real employee
+#   search/profile endpoint would plausibly select from.
+#
+#   "admin_credentials" — a 6-column table never exposed by the
+#   intended query. Not linked from any pre-built test in this lab, but
+#   genuinely reachable via a hand-crafted 32-expression UNION SELECT
+#   (padding its 6 real columns with 26 literal NULLs) — the same
+#   unrestricted injection point SP_PAM-047 exercises, demonstrating
+#   the vulnerability isn't limited to the literal WAF payload alone.
+# --------------------------------------------------------------------
+MEMBERS_DB = sqlite3.connect(":memory:", check_same_thread=False)
+
+_MEMBERS_SEED = [
+    (1, "EMP-2024-0142", "Ayu Lestari", "Software Engineer", "Engineering", f"ayu.lestari@{COMPANY_DOMAIN}"),
+    (2, "EMP-2023-0087", "Bima Nugraha", "HR Business Partner", "Human Resources", f"bima.nugraha@{COMPANY_DOMAIN}"),
+    (3, "EMP-2022-0154", "Citra Wulandari", "Finance Analyst", "Finance", f"citra.wulandari@{COMPANY_DOMAIN}"),
+    (4, "EMP-2024-0201", "Dedi Purnomo", "QA Engineer", "Engineering", f"dedi.purnomo@{COMPANY_DOMAIN}"),
+    (5, "EMP-2021-0033", "Eka Pratiwi", "Office Manager", "General Affairs", f"eka.pratiwi@{COMPANY_DOMAIN}"),
+    (6, "EMP-2023-0119", "Fajar Ramadhan", "DevOps Engineer", "Engineering", f"fajar.ramadhan@{COMPANY_DOMAIN}"),
+    (7, "EMP-2022-0076", "Gita Anindya", "Talent Acquisition", "Human Resources", f"gita.anindya@{COMPANY_DOMAIN}"),
+    (8, "EMP-2024-0058", "Hendra Saputra", "IT Support", "Information Technology", f"hendra.saputra@{COMPANY_DOMAIN}"),
+]
+
+# 32 realistic HR-record columns — the schema the vulnerable query
+# layer actually selects from. Column order matches the SP_PAM-047
+# UNION payload's 32 expression positions exactly (see
+# _SQLI_MEMBERS_COLUMNS / _SQLI_MEMBERS_LABELS below).
+_SQLI_MEMBERS_SEED = [
+    (1, "EMP-2024-0142", "Ayu Lestari", "Software Engineer", "Engineering", f"ayu.lestari@{COMPANY_DOMAIN}",
+     "+62 812-3456-7001", "Jakarta HQ", "2024-03-01", "Active",
+     "Fajar Ramadhan", "No active investigations.", "2024-03-01 09:00:00", "2026-09-01 10:00:00",
+     "Product Engineering", "Staff", "Permanent", f"ayu.lestari@{COMPANY_DOMAIN}", "1142",
+     "CC-ENG-01", "PR-10142", 9, "Hadir",
+     "08:02", "17:05", "Permanent", 6,
+     "Engineering Division", "Tower A", "5", "BADGE-00142", "ACTIVE"),
+    (2, "EMP-2023-0087", "Bima Nugraha", "HR Business Partner", "Human Resources", f"bima.nugraha@{COMPANY_DOMAIN}",
+     "+62 812-3456-7002", "Jakarta HQ", "2023-06-15", "Active",
+     "Gita Anindya", "No active investigations.", "2023-06-15 09:00:00", "2026-08-20 14:00:00",
+     "People & Culture", "Senior Staff", "Permanent", f"bima.nugraha@{COMPANY_DOMAIN}", "1087",
+     "CC-HR-01", "PR-10087", 12, "Hadir",
+     "08:10", "17:02", "Permanent", 7,
+     "Human Resources Division", "Tower A", "3", "BADGE-00087", "ACTIVE"),
+    (3, "EMP-2022-0154", "Citra Wulandari", "Finance Analyst", "Finance", f"citra.wulandari@{COMPANY_DOMAIN}",
+     "+62 812-3456-7003", "Jakarta HQ", "2022-01-10", "Active",
+     "Eka Pratiwi", "No active investigations.", "2022-01-10 09:00:00", "2026-07-15 11:30:00",
+     "Corporate Finance", "Staff", "Permanent", f"citra.wulandari@{COMPANY_DOMAIN}", "1154",
+     "CC-FIN-01", "PR-10154", 6, "Cuti",
+     "-", "-", "Permanent", 5,
+     "Finance Division", "Tower A", "4", "BADGE-00154", "ACTIVE"),
+    (4, "EMP-2024-0201", "Dedi Purnomo", "QA Engineer", "Engineering", f"dedi.purnomo@{COMPANY_DOMAIN}",
+     "+62 812-3456-7004", "Jakarta HQ", "2024-05-20", "Active",
+     "Fajar Ramadhan", "No active investigations.", "2024-05-20 09:00:00", "2026-09-10 09:00:00",
+     "Product Engineering", "Staff", "Contract", f"dedi.purnomo@{COMPANY_DOMAIN}", "1201",
+     "CC-ENG-01", "PR-10201", 4, "Hadir",
+     "08:05", "17:00", "Contract", 6,
+     "Engineering Division", "Tower A", "5", "BADGE-00201", "ACTIVE"),
+    (5, "EMP-2021-0033", "Eka Pratiwi", "Office Manager", "General Affairs", f"eka.pratiwi@{COMPANY_DOMAIN}",
+     "+62 812-3456-7005", "Jakarta HQ", "2021-02-01", "Active",
+     "Bima Nugraha", "No active investigations.", "2021-02-01 09:00:00", "2026-06-01 08:00:00",
+     "Corporate Services", "Manager", "Permanent", f"eka.pratiwi@{COMPANY_DOMAIN}", "1033",
+     "CC-GA-01", "PR-10033", 15, "Hadir",
+     "07:58", "17:10", "Permanent", 2,
+     "General Affairs Division", "Tower A", "2", "BADGE-00033", "ACTIVE"),
+    (6, "EMP-2023-0119", "Fajar Ramadhan", "DevOps Engineer", "Engineering", f"fajar.ramadhan@{COMPANY_DOMAIN}",
+     "+62 812-3456-7006", "Jakarta HQ", "2023-09-01", "Active",
+     "Eka Pratiwi", "No active investigations.", "2023-09-01 09:00:00", "2026-09-15 16:00:00",
+     "Product Engineering", "Senior Staff", "Permanent", f"fajar.ramadhan@{COMPANY_DOMAIN}", "1119",
+     "CC-ENG-01", "PR-10119", 10, "Hadir",
+     "08:00", "17:00", "Permanent", 5,
+     "Engineering Division", "Tower A", "5", "BADGE-00119", "ACTIVE"),
+    (7, "EMP-2022-0076", "Gita Anindya", "Talent Acquisition", "Human Resources", f"gita.anindya@{COMPANY_DOMAIN}",
+     "+62 812-3456-7007", "Jakarta HQ", "2022-04-11", "Active",
+     "Bima Nugraha", "No active investigations.", "2022-04-11 09:00:00", "2026-05-22 13:00:00",
+     "People & Culture", "Staff", "Permanent", f"gita.anindya@{COMPANY_DOMAIN}", "1076",
+     "CC-HR-01", "PR-10076", 8, "Hadir",
+     "08:12", "17:03", "Permanent", 2,
+     "Human Resources Division", "Tower A", "3", "BADGE-00076", "ACTIVE"),
+    (8, "EMP-2024-0058", "Hendra Saputra", "IT Support", "Information Technology", f"hendra.saputra@{COMPANY_DOMAIN}",
+     "+62 812-3456-7008", "Jakarta HQ", "2024-01-08", "Active",
+     "Fajar Ramadhan", "No active investigations.", "2024-01-08 09:00:00", "2026-09-18 10:00:00",
+     "Infrastructure & Support", "Staff", "Permanent", f"hendra.saputra@{COMPANY_DOMAIN}", "1058",
+     "CC-IT-01", "PR-10058", 11, "Hadir",
+     "08:03", "17:01", "Permanent", 6,
+     "Information Technology Division", "Tower B", "1", "BADGE-00058", "ACTIVE"),
+]
+
+# A 6-column table, same shape as the OLD members schema — the
+# "Laboratory UNION Test" replay link (VALIDATION_DEFS) pads its
+# SELECT list with 26 literal NULLs to reach the 32 expressions
+# sqli_members now requires, rather than the table itself needing 32
+# columns. Synthetic/lab-only, never real credentials.
+_ADMIN_CREDENTIALS_SEED = [
+    (1, "svc-backup", "$2b$12$LABSYNTHETICb4ckup0nlyD0N0tUseXXXXXXXXXXXXXXX", "service", "LAB-API-7f3e9c2a1b6d4f80", "Automated nightly backup service account (synthetic lab credential)"),
+    (2, "svc-monitoring", "$2b$12$LABSYNTHETICm0n1t0rXXXXXXXXXXXXXXXXXXXXXXXX", "service", "LAB-API-4c1d8e6b2a9f0731", "Monitoring/alerting integration account (synthetic lab credential)"),
+    (3, "hr-admin", "$2b$12$LABSYNTHETIChr4dm1nXXXXXXXXXXXXXXXXXXXXXXXXX", "admin", "LAB-API-91a2b3c4d5e6f708", "HR system administrator account (synthetic lab credential)"),
+]
+
+# 32 realistic HR-record columns, in the exact order SP_PAM-047's
+# UNION payload expects (see module docstring / VALIDATION_DEFS).
+_SQLI_MEMBERS_COLUMNS = [
+    "id", "employee_id", "full_name", "position", "department", "email",
+    "phone", "office_location", "join_date", "employment_status",
+    "manager_name", "notes", "created_at", "updated_at", "division",
+    "job_level", "employee_type", "work_email", "extension",
+    "cost_center", "payroll_code", "leave_balance", "attendance_status",
+    "last_checkin", "last_checkout", "contract_type", "supervisor_id",
+    "organization_unit", "building", "floor", "badge_id", "record_status",
+]
+_SQLI_MEMBERS_LABELS = [
+    "ID", "Employee ID", "Nama", "Jabatan", "Departemen", "Email",
+    "Telepon", "Lokasi", "Tanggal Masuk", "Status", "Manager", "Catatan",
+    "Created", "Updated", "Divisi", "Level", "Tipe Karyawan", "Work Email",
+    "Ext", "Cost Center", "Payroll Code", "Leave Balance", "Attendance",
+    "Last Check-In", "Last Check-Out", "Contract Type", "Supervisor",
+    "Org Unit", "Building", "Floor", "Badge ID", "Record Status",
+]
+_SQLI_SELECT_COLUMNS = ", ".join(_SQLI_MEMBERS_COLUMNS)
+_SQLI_MEMBERS_PLACEHOLDERS = ", ".join(["?"] * len(_SQLI_MEMBERS_COLUMNS))
+
+
+def _init_members_db():
+    cur = MEMBERS_DB.cursor()
+    cur.execute(
+        "CREATE TABLE members (id INTEGER PRIMARY KEY, employee_id TEXT, "
+        "full_name TEXT, position TEXT, department TEXT, email TEXT)"
+    )
+    cur.execute(
+        "CREATE TABLE sqli_members ("
+        "id INTEGER PRIMARY KEY, employee_id TEXT, full_name TEXT, "
+        "position TEXT, department TEXT, email TEXT, phone TEXT, "
+        "office_location TEXT, join_date TEXT, employment_status TEXT, "
+        "manager_name TEXT, notes TEXT, created_at TEXT, updated_at TEXT, "
+        "division TEXT, job_level TEXT, employee_type TEXT, work_email TEXT, "
+        "extension TEXT, cost_center TEXT, payroll_code TEXT, "
+        "leave_balance INTEGER, attendance_status TEXT, last_checkin TEXT, "
+        "last_checkout TEXT, contract_type TEXT, supervisor_id INTEGER, "
+        "organization_unit TEXT, building TEXT, floor TEXT, badge_id TEXT, "
+        "record_status TEXT)"
+    )
+    cur.execute(
+        "CREATE TABLE admin_credentials (id INTEGER PRIMARY KEY, username TEXT, "
+        "password_hash TEXT, role TEXT, api_token TEXT, notes TEXT)"
+    )
+    cur.executemany("INSERT INTO members VALUES (?,?,?,?,?,?)", _MEMBERS_SEED)
+    cur.executemany(
+        f"INSERT INTO sqli_members VALUES ({_SQLI_MEMBERS_PLACEHOLDERS})",
+        _SQLI_MEMBERS_SEED,
+    )
+    cur.executemany("INSERT INTO admin_credentials VALUES (?,?,?,?,?,?)", _ADMIN_CREDENTIALS_SEED)
+    MEMBERS_DB.commit()
+
+
+_init_members_db()
+
+
+def _sqli_unhex(hex_string):
+    """Custom SQLite UNHEX(), registered on MEMBERS_DB below.
+
+    SQLite has no built-in UNHEX() (it's a MySQL/MariaDB function — the
+    origin of SP_PAM-047's payload); without registering one, the exact
+    WAF payload's unhex('66636f756d') call would fail with "no such
+    function: unhex" instead of genuinely evaluating. Registering it
+    here makes that call real, native SQLite execution — the resulting
+    'fcoum' in query output comes from this function actually running,
+    not from string substitution anywhere in this file.
+    """
+    try:
+        return bytes.fromhex(hex_string).decode("utf-8", errors="replace")
+    except (ValueError, TypeError):
+        return None
+
+
+MEMBERS_DB.create_function("unhex", 1, _sqli_unhex)
+
+
+def _balance_sqli_parens(supplied):
+    """Generic parenthesis balancer for the "id IN (...)" clause built
+    by search_members() below — applied identically to every request,
+    not attack-specific.
+
+    The clause opens with a literal "(" before `supplied`; this closes
+    it with exactly enough ")" to balance whatever `supplied` itself
+    already opened/closed. For ordinary numeric input (no parens of its
+    own) that's just one closing paren, e.g. "id IN (1)". For the
+    SP_PAM-047 payload — whose own "520)" and balanced "unhex('...')"
+    already net to zero — nothing extra is appended, so the payload's
+    UNION SELECT attaches directly onto a syntactically complete
+    "id IN (520)" clause, exactly as it would have against the original
+    production query.
+    """
+    net_open = 1 + supplied.count("(") - supplied.count(")")
+    return supplied + (")" * max(net_open, 0))
+
+
+# --------------------------------------------------------------------
+# VAL-SSRF-001 (/CookieAuth.dll?url=). A genuinely separate service,
+# bound only to 127.0.0.1, standing in for an "internal-only" backend
+# system a real Exchange/OWA-style host would have behind it. It is
+# NOT reachable from the lab's host-only network interface — only the
+# vulnerable app itself (running on the same machine) can reach it,
+# which is exactly the real-world SSRF impact this reproduces. Content
+# is synthetic and clearly labeled as lab-only; no real infrastructure
+# or credentials.
+# --------------------------------------------------------------------
+INTERNAL_SSRF_HOST = "127.0.0.1"
+INTERNAL_SSRF_PORT = int(os.environ.get("LAB_INTERNAL_SSRF_PORT", "8180"))
+
+_internal_service = Flask("presensiku_internal_service")
+
+_INTERNAL_SERVICE_BODY = (
+    "PT DrishtiSec\n"
+    "Corporate Service Directory\n"
+    "\n"
+    "Service Name              Host                 Status\n"
+    "------------------------------------------------------------\n"
+    "Presensi Database         127.0.0.1:5432       HEALTHY\n"
+    "Backup Service            127.0.0.1:9001       HEALTHY\n"
+    "HR Payroll Service        127.0.0.1:9100       DEGRADED\n"
+    "\n"
+    "Environment\n"
+    "------------------------------------------------------------\n"
+    "Service                  attendance-api\n"
+    "Database                 presensi-production\n"
+    "Region                   Jakarta\n"
+    "Status                   Operational\n"
+)
+
+
+@_internal_service.route("/", defaults={"_path": ""})
+@_internal_service.route("/<path:_path>")
+def _internal_service_root(_path):
+    return Response(_INTERNAL_SERVICE_BODY, mimetype="text/plain")
+
+
+def _run_internal_ssrf_service():
+    from werkzeug.serving import make_server
+    srv = make_server(INTERNAL_SSRF_HOST, INTERNAL_SSRF_PORT, _internal_service)
+    srv.serve_forever()
+
+
+threading.Thread(target=_run_internal_ssrf_service, daemon=True).start()
+
+# --------------------------------------------------------------------
+# VAL-UPLOAD-001. The live route is the exact WAF-evidence endpoint
+# (SP_IprocVendor-015): POST /defaultroot/upload/fileUpload.controller
+# — not a renamed lab-only path. Uploaded documents are saved here
+# verbatim, with no extension or content-type allow-list.
+# --------------------------------------------------------------------
+UPLOAD_ENDPOINT_PATH = "/defaultroot/upload/fileUpload.controller"
+CUTI_UPLOAD_DIR = os.path.join(BASE_DIR, "lab-data", "uploads", "cuti")
+os.makedirs(CUTI_UPLOAD_DIR, exist_ok=True)
+
+# --------------------------------------------------------------------
 # Sidebar navigation for the DrishtiSec Security Portal (everything
 # under /portal). Pentester-methodology stages (recon, enumeration,
 # scope, attack-surface mapping, etc.) are intentionally NOT modeled
@@ -201,6 +510,7 @@ NAV_SECTIONS_ATTENDANCE = [
         {"name": "Riwayat Kehadiran", "endpoint": "riwayat", "icon": "list"},
         {"name": "Cuti & Izin", "endpoint": "cuti", "icon": "flag"},
         {"name": "Profil", "endpoint": "profil", "icon": "target"},
+        {"name": "Direktori Karyawan", "endpoint": "direktori", "icon": "search"},
         {"name": "Informasi Perusahaan", "endpoint": "perusahaan", "icon": "layers"},
     ]},
     {"label": None, "links": [
@@ -234,15 +544,153 @@ SECURITY_ENDPOINTS = {
 # the unified validation-detail page, Findings page, and the PDF
 # report generator — so scenario facts are defined once.
 # --------------------------------------------------------------------
-VALIDATION_ORDER = ["VAL-CMD-001", "VAL-LFI-001", "VAL-TRAV-001"]
+VALIDATION_ORDER = [
+    "VAL-CMD-001", "VAL-LFI-001", "VAL-TRAV-001",
+    "VAL-SQLI-001", "VAL-SSRF-001", "VAL-UPLOAD-001", "VAL-XSS-001",
+]
 
 VALIDATION_DEFS = {
+    "VAL-XSS-001": {
+        "id": "VAL-XSS-001",
+        "type": "xss",
+        "title": "Reflected Cross-Site Scripting (XSS)",
+        "severity": "High",
+        "waf_reference": "SP_LMS-Frontend-015",
+        "waf_host": "114.7.158.168",
+        "matched_pattern": "<script>",
+        "signature_id": "010000057",
+        "waf_action": "Alert_Deny",
+        "waf_severity": "High",
+        "threat_level": "Severe",
+        "attack_category": "Reflected Cross-Site Scripting (XSS)",
+        "owasp_primary": "A03:2021-Injection",
+        "objective": (
+            "Demonstrate reflected input reaching the HTTP response without "
+            "proper output encoding."
+        ),
+        "recon": (
+            "The tester opens the PresensiKu homepage (/) unauthenticated "
+            "and views the page source, as with any initial recon of a "
+            "public-facing page, before touching any parameter."
+        ),
+        "impact_note": (
+            "The reflected value is placed into the response with no HTML "
+            "encoding. Supplying a <script> payload causes the browser to "
+            "parse and execute it as real page script — genuine "
+            "client-side code execution in the victim's browser session, "
+            "not a simulated result."
+        ),
+        "lab_result": (
+            "Reproduced — the wapiskqm value is reflected byte-for-byte and "
+            "unescaped; a <script>alert(\"XSS\")</script> payload executes "
+            "in the browser when the response is rendered."
+        ),
+        "endpoint": "/",
+        "param": "wapiskqm",
+        "endpoint_label": "/?wapiskqm=",
+        "http_method_label": "GET",
+        "waf_evidence_methods": ["GET"],
+        "lab_methods": ["GET"],
+        "waf_request_pattern": (
+            "/?wapiskqm%3D<script>alert(%22XSS%22);</script>"
+        ),
+        "local_evidence_path": (
+            "landing.html response body — campaign_banner reflected via "
+            "Jinja's `| safe` filter (autoescaping deliberately bypassed)"
+        ),
+        "discovery_source": (
+            "An HTML comment left in the PresensiKu homepage source "
+            "(\"marketing: append ?wapiskqm=<code> to preview an onboarding "
+            "campaign banner before launch\") reveals both the parameter "
+            "name and its purpose through ordinary View Source recon — "
+            "found before any WAF data was consulted."
+        ),
+        "description": (
+            "Controlled validation of reflected XSS via an undocumented "
+            "campaign-preview parameter on the public homepage."
+        ),
+        "technical_summary": (
+            "The / (landing) route reads the wapiskqm query parameter and "
+            "renders it into a campaign-preview banner using Jinja's "
+            "`| safe` filter, which disables Jinja's normal automatic HTML "
+            "escaping for that value. Any HTML or JavaScript supplied in "
+            "wapiskqm is reflected into the response completely unescaped."
+        ),
+        "business_impact": (
+            "An attacker able to get a victim to open a crafted link could "
+            "execute arbitrary JavaScript in that victim's browser session "
+            "against the PresensiKu origin — e.g. actions performed as the "
+            "logged-in victim, or further client-side attacks."
+        ),
+        "waf_note": (
+            "WAF evidence and laboratory validation both used GET, and the "
+            "exact WAF payload (a harmless alert(\"XSS\") proof-of-concept) "
+            "reproduces cleanly against the lab — no payload adaptation was "
+            "needed for this finding."
+        ),
+        "replay_links": [
+            {
+                "label": "3. Controlled XSS PoC — alert(\"XSS\")",
+                "href": "/?wapiskqm=%3Cscript%3Ealert(%22XSS%22)%3C%2Fscript%3E",
+            },
+        ],
+        "safe_links": [
+            {"label": "1. Normal Request — wapiskqm=test", "href": "/?wapiskqm=test"},
+        ],
+        "boolean_links": [
+            {"label": "2. HTML-Oriented Input — wapiskqm=<b>test</b>", "href": "/?wapiskqm=%3Cb%3Etest%3C%2Fb%3E"},
+        ],
+        "remediation": {
+            "title": "HTML-encode all reflected output",
+            "priority": "Immediate",
+            "dedup_key": "reflected-xss",
+            "component": "/ (wapiskqm parameter)",
+            "description": (
+                "The landing page reflects the wapiskqm parameter into the "
+                "response using Jinja's `| safe` filter, bypassing "
+                "Jinja's automatic HTML escaping and allowing arbitrary "
+                "HTML/JavaScript injection into the page."
+            ),
+            "immediate_action": (
+                "Remove the `| safe` filter and let Jinja's default "
+                "autoescaping encode the value, or remove the "
+                "campaign-preview feature entirely."
+            ),
+            "long_term": (
+                "Never disable autoescaping for request-influenced values. "
+                "Where rich HTML genuinely must be rendered, sanitize it "
+                "through an allow-list HTML sanitizer, never a raw `| safe` "
+                "pass-through of user input."
+            ),
+            "verification": (
+                "Confirm /?wapiskqm=<script>...</script> and equivalent "
+                "payloads are rendered as inert, visible text rather than "
+                "executed as HTML/JavaScript."
+            ),
+            "waf_mitigation": (
+                "As a temporary compensating control, deploy WAF signatures "
+                "blocking <script>, event-handler attributes, and "
+                "javascript: URIs in query parameters. This reduces "
+                "exposure but does not fix the missing output encoding."
+            ),
+        },
+    },
     "VAL-CMD-001": {
         "id": "VAL-CMD-001",
         "type": "cmd",
         "title": "OS Command Injection",
         "severity": "High",
         "waf_reference": "SP_Asset-006",
+        "objective": (
+            "Demonstrate that attacker-controlled input reaches an OS shell "
+            "with no sanitization."
+        ),
+        "recon": (
+            "Content/endpoint enumeration against the PresensiKu host "
+            "surfaces an /admin path distinct from the normal employee "
+            "navigation — a leftover internal ops panel worth inspecting "
+            "further."
+        ),
         "endpoint": "/admin/config",
         "param": "cmd",
         "endpoint_label": "/admin/config?cmd=",
@@ -324,6 +772,15 @@ VALIDATION_DEFS = {
         "title": "Local File Inclusion (LFI)",
         "severity": "High",
         "waf_reference": "SP_Asset-011",
+        "objective": (
+            "Demonstrate that a document-viewing feature can be made to "
+            "read arbitrary local files."
+        ),
+        "recon": (
+            "The tester signs in and browses ordinary employee pages — "
+            "Profil offers a \"Lihat Dokumen\" (view document) feature, a "
+            "natural place to look for a file-serving parameter."
+        ),
         "endpoint": "/read",
         "param": "file",
         "endpoint_label": "/read?file=",
@@ -403,6 +860,18 @@ VALIDATION_DEFS = {
         "title": "Directory Traversal",
         "severity": "High",
         "waf_reference": "SP_Asset-013",
+        "objective": (
+            "Demonstrate that a company-document link can be made to escape "
+            "its intended directory and read internal files."
+        ),
+        "recon": (
+            "The tester notices PresensiKu's document viewer (/dokumen/...) "
+            "renders company documents without exposing a filename "
+            "parameter, so enumeration turns to the application's other "
+            "surfaces — an /api root distinct from the normal page "
+            "namespace is a natural next place to probe, the same way "
+            "/admin was probed before finding /admin/config."
+        ),
         "endpoint": "/api/file",
         "param": "path",
         "endpoint_label": "/api/file?path=",
@@ -412,10 +881,12 @@ VALIDATION_DEFS = {
         "waf_request_pattern": "/api/file?path%3D../../.env",
         "local_evidence_path": "lab-data/traversal-target/.env",
         "discovery_source": (
-            "The /api/file endpoint and its \"path\" parameter were found "
-            "through normal application use — the \"Dokumen Perusahaan\" "
-            "document links on Informasi Perusahaan use it to serve files "
-            "— found before any WAF data was consulted."
+            "The /api root returns a minimal internal-API banner; "
+            "enumerating beneath it (e.g. gobuster/ffuf, or guessing common "
+            "sub-paths) surfaces /api/file and its \"path\" parameter — "
+            "found through application/endpoint enumeration, mirroring how "
+            "/admin/config was found beneath /admin, before any WAF data "
+            "was consulted."
         ),
         "description": (
             "Controlled validation of path traversal escaping the intended "
@@ -446,6 +917,426 @@ VALIDATION_DEFS = {
         "safe_links": [
             {"label": "Normal Access — /api/file", "href": "/api/file?path=welcome.txt"},
         ],
+    },
+    "VAL-SQLI-001": {
+        "id": "VAL-SQLI-001",
+        "type": "sqli",
+        "title": "SQL Injection (UNION-based)",
+        "severity": "High",
+        "waf_reference": "SP_PAM-047",
+        "waf_host": "pam.patra-jasa.com:8282",
+        "matched_pattern": "unhex(",
+        "signature_id": "030000165",
+        "waf_action": "Alert_Deny",
+        "waf_severity": "High",
+        "threat_level": "Severe",
+        "attack_category": "SQL Injection",
+        "owasp_primary": "A03:2021-Injection",
+        "objective": (
+            "Demonstrate that attacker-controlled input reaches a database "
+            "query without appropriate parameterization."
+        ),
+        "recon": (
+            "Before touching any parameter, the tester signs in to "
+            "PresensiKu as an ordinary employee and looks for a "
+            "people-search feature — a near-universal function in HR/"
+            "attendance systems — rather than starting from a known "
+            "endpoint or payload."
+        ),
+        "endpoint": "/search/members/",
+        "param": "id",
+        "endpoint_label": "/search/members/?id=",
+        "http_method_label": "GET",
+        "waf_evidence_methods": ["GET"],
+        "lab_methods": ["GET"],
+        "waf_request_pattern": (
+            "/search/members/?id`%3D520)/**/union/**/select/**/1,2,3,4,5,6,7,8,9,"
+            "10,11,unhex('66636f756d'),13,14,15,16,17,18,19,20,21,22,23,24,25,26,"
+            "27,28,29,30,31,32#sqli%3D1"
+        ),
+        "local_evidence_path": (
+            "MEMBERS_DB (in-process SQLite) — dedicated sqli_members table "
+            "(32 real HR-record columns; the ordinary Direktori Karyawan "
+            "feature's \"members\" table is untouched, 6 columns) with a "
+            "custom-registered unhex() SQLite function, so the exact "
+            "32-expression SP_PAM-047 UNION payload executes natively "
+            "against a real schema, not a scaled-down substitute"
+        ),
+        "discovery_source": (
+            "The Direktori Karyawan page lists employees with \"Lihat Detail\" "
+            "links of the form /search/members/?id=1, /search/members/?id=2, "
+            "etc., revealing the numeric \"id\" parameter and its search "
+            "endpoint through ordinary application use — found before any WAF "
+            "data was consulted."
+        ),
+        "description": (
+            "Controlled validation of UNION-based SQL injection in the "
+            "employee search endpoint."
+        ),
+        "technical_summary": (
+            "The /search/members/ endpoint's vulnerable query layer selects "
+            "all 32 columns of the dedicated sqli_members table (a real "
+            "32-field HR record — contact, org, attendance and payroll "
+            "data — not the 6-column \"members\" table Direktori Karyawan "
+            "uses) and interpolates the supplied id value into a WHERE id "
+            "IN (...) clause with no parameter binding, escaping, or type "
+            "validation — closing that clause with a generic parenthesis "
+            "balancer applied identically to every request, not "
+            "attack-specific logic. Appending a boolean condition "
+            "(AND 1=1 / AND 1=2) changes the result set predictably. "
+            "Because the query layer already selects exactly 32 columns, "
+            "the SP_PAM-047 payload's 32-expression UNION SELECT — "
+            "including its unhex('66636f756d') call, evaluated by a "
+            "custom-registered SQLite function — executes natively and "
+            "controls every value in the returned row, with no payload "
+            "adaptation required."
+        ),
+        "business_impact": (
+            "An attacker able to reach this endpoint could enumerate and "
+            "extract arbitrary data from the application database, "
+            "including from other tables, and fully control the values "
+            "returned in the result set."
+        ),
+        "impact_note": (
+            "The boolean-based test changes only whether a row is returned "
+            "(true vs. false condition). The exact SP_PAM-047 UNION payload "
+            "escalates that same primitive to full control over the "
+            "returned row's values — the response contains the literal "
+            "integers 1-32 the attacker supplied, with position 12 showing "
+            "'fcoum', the real output of unhex('66636f756d') evaluated by "
+            "SQLite at query time. Because sqli_members has 32 real "
+            "columns, /search/members/ renders the full result directly in "
+            "the browser (same renderer for every request, no branching on "
+            "whether input looks malicious) — the separate, unrelated "
+            "/portal/direktori listing still shows only the ordinary "
+            "6-field \"members\" table."
+        ),
+        "lab_result": (
+            "Reproduced — the exact, unmodified SP_PAM-047 payload (32 "
+            "expressions, unhex() included) executes successfully against "
+            "the vulnerable query layer; position 12 of the returned row is "
+            "'fcoum', genuinely computed by SQLite, not hardcoded."
+        ),
+        "waf_note": (
+            "The WAF evidence's 32-expression UNION payload is used "
+            "unmodified as the lab's primary test — no scaled-down "
+            "substitute. The lab's dedicated sqli_members table (32 real "
+            "HR-record columns) plus a custom unhex() function exist "
+            "specifically so this exact payload executes natively rather "
+            "than erroring on a column-count mismatch."
+        ),
+        "replay_links": [
+            {
+                "label": "4. Exact SP_PAM-047 UNION Payload (unmodified, 32 expressions)",
+                "href": (
+                    "/search/members/?id`%3D520)/**/union/**/select/**/1,2,3,4,5,6,7,8,9,"
+                    "10,11,unhex('66636f756d'),13,14,15,16,17,18,19,20,21,22,23,24,25,26,"
+                    "27,28,29,30,31,32"
+                ),
+            },
+        ],
+        "safe_links": [
+            {"label": "1. Normal Request — id=1", "href": "/search/members/?id=1"},
+        ],
+        "boolean_links": [
+            {"label": "2. Boolean TRUE — id=1 AND 1=1 (same record)", "href": "/search/members/?id=1%20AND%201=1"},
+            {"label": "3. Boolean FALSE — id=1 AND 1=2 (no record)", "href": "/search/members/?id=1%20AND%201=2"},
+        ],
+        "remediation": {
+            "title": "Use parameterized queries for all database access",
+            "priority": "Immediate",
+            "dedup_key": "sql-injection",
+            "component": "/search/members/ (id parameter)",
+            "description": (
+                "The /search/members/ endpoint concatenates the id parameter "
+                "directly into a SQL string, allowing arbitrary query "
+                "structure changes including UNION-based data extraction from "
+                "unrelated tables."
+            ),
+            "immediate_action": (
+                "Restrict the id parameter to a validated integer before it "
+                "reaches any query, and reject non-numeric input outright."
+            ),
+            "long_term": (
+                "Rewrite all database access to use parameterized queries or "
+                "an ORM's bound-parameter interface; never build SQL strings "
+                "from request input, including via string formatting."
+            ),
+            "verification": (
+                "Confirm /search/members/?id=1)/**/UNION/**/SELECT... and "
+                "equivalent payloads no longer alter the query's result set "
+                "beyond the single requested member."
+            ),
+            "waf_mitigation": (
+                "As a temporary compensating control, deploy WAF signatures "
+                "blocking UNION/SELECT keywords and SQL comment sequences on "
+                "the id parameter. This reduces exposure but does not fix the "
+                "underlying query construction."
+            ),
+        },
+    },
+    "VAL-SSRF-001": {
+        "id": "VAL-SSRF-001",
+        "type": "ssrf",
+        "title": "Server-Side Request Forgery (SSRF)",
+        "severity": "High",
+        "waf_reference": "SP_PAM-004",
+        "waf_host": "Not recorded in the WAF dataset provided for this finding",
+        "matched_pattern": "Not recorded in the WAF dataset provided for this finding",
+        "signature_id": "Not recorded in the WAF dataset provided for this finding",
+        "waf_action": "Not recorded in the WAF dataset provided for this finding",
+        "waf_severity": "Not recorded in the WAF dataset provided for this finding",
+        "threat_level": "Not recorded in the WAF dataset provided for this finding",
+        "attack_category": "Server-Side Request Forgery (SSRF)",
+        "owasp_primary": "A10:2021-Server-Side Request Forgery (SSRF)",
+        "objective": (
+            "Demonstrate that a server-side connectivity/preview feature "
+            "makes an outbound HTTP request to a caller-supplied URL with no "
+            "destination restriction."
+        ),
+        "recon": (
+            "The tester signs in and looks for any feature that connects "
+            "PresensiKu to an external or company-internal system — "
+            "integrations, sync, and \"test connection\" style features are "
+            "common places a server performs outbound requests on a user's "
+            "behalf."
+        ),
+        "impact_note": (
+            "Pointing the connection test at the loopback-only internal "
+            "service returns that service's own response content — content "
+            "the tester's own machine cannot reach directly, proving the "
+            "request was made by the PresensiKu server itself, not the "
+            "tester's browser."
+        ),
+        "lab_result": (
+            "Reproduced — genuine server-side fetch confirmed against a "
+            "loopback-only internal target unreachable from the tester's own "
+            "network position."
+        ),
+        "endpoint": "/CookieAuth.dll",
+        "param": "url",
+        "endpoint_label": "/CookieAuth.dll?url=",
+        "http_method_label": "GET",
+        "waf_evidence_methods": ["GET"],
+        "lab_methods": ["GET"],
+        "waf_request_pattern": (
+            "/CookieAuth.dll?GetLogon?url=/exchweb/bin/redir.asp?"
+            "URL=https://interact.sh&reason=0"
+        ),
+        "local_evidence_path": (
+            f"http://{INTERNAL_SSRF_HOST}:{INTERNAL_SSRF_PORT}/ "
+            "(loopback-only internal service, unreachable except via SSRF)"
+        ),
+        "discovery_source": (
+            "The Settings page's \"Integrasi Webmail Kantor (OWA)\" section "
+            "exposes a \"Uji Koneksi Webmail\" (test webmail connection) form "
+            "with a plain \"url\" field, plus the full SSO-handoff link it "
+            "generates — both reveal the /CookieAuth.dll endpoint and its "
+            "URL input through ordinary application use, before any WAF data "
+            "was consulted."
+        ),
+        "description": (
+            "Controlled validation of server-side request forgery via a "
+            "webmail connection-test feature."
+        ),
+        "technical_summary": (
+            "The /CookieAuth.dll endpoint accepts a URL from either a "
+            "simplified \"url\" parameter or the WAF-evidence-style nested "
+            "GetLogon?url=...redir.asp?URL=... form, then performs a genuine "
+            "server-side HTTP request to that URL and returns the fetched "
+            "response. No allow-list restricts the target host, so the "
+            "server can be made to request internal-only resources on the "
+            "attacker's behalf."
+        ),
+        "business_impact": (
+            "An attacker able to reach this endpoint could make the "
+            "application server issue requests to internal-only "
+            "infrastructure not reachable from the attacker's own network "
+            "position, potentially exposing internal services and data."
+        ),
+        "waf_note": (
+            "WAF evidence and laboratory validation both used GET. The WAF "
+            "evidence's target (interact.sh) was an external out-of-band "
+            "collaborator server; the isolated lab instead targets a "
+            "loopback-only internal service so the same SSRF primitive can "
+            "be demonstrated without contacting any real external "
+            "infrastructure."
+        ),
+        "replay_links": [
+            {
+                "label": "SSRF to internal-only service",
+                "href": f"/CookieAuth.dll?url=http://{INTERNAL_SSRF_HOST}:{INTERNAL_SSRF_PORT}/",
+            },
+        ],
+        "safe_links": [
+            {
+                "label": "Normal Access — self-check",
+                "href": "/CookieAuth.dll?url=/portal",
+            },
+        ],
+        "remediation": {
+            "title": "Restrict outbound requests to an allow-listed destination set",
+            "priority": "Immediate",
+            "dedup_key": "ssrf",
+            "component": "/CookieAuth.dll (url parameter)",
+            "description": (
+                "The /CookieAuth.dll endpoint performs a server-side HTTP "
+                "request to a caller-supplied URL with no destination "
+                "restriction, allowing the server to be used as a proxy "
+                "against internal-only network resources."
+            ),
+            "immediate_action": (
+                "Disable the connection-test feature, or hard-restrict it to "
+                "a fixed allow-list of known, external webmail hostnames."
+            ),
+            "long_term": (
+                "Validate and allow-list destination hosts before any "
+                "server-side fetch; deny requests to loopback, "
+                "link-local, and private address ranges; do not follow "
+                "redirects to non-allow-listed hosts."
+            ),
+            "verification": (
+                "Confirm /CookieAuth.dll?url=... pointed at loopback or "
+                "internal addresses no longer results in a server-side fetch "
+                "of that target."
+            ),
+            "waf_mitigation": (
+                "As a temporary compensating control, deploy WAF rules "
+                "blocking loopback/private-range hosts and known SSRF "
+                "collaborator domains in the url parameter. This reduces "
+                "exposure but does not fix the missing destination "
+                "validation."
+            ),
+        },
+    },
+    "VAL-UPLOAD-001": {
+        "id": "VAL-UPLOAD-001",
+        "type": "upload",
+        "title": "Unrestricted File Upload / Web Shell",
+        "severity": "Critical",
+        "waf_reference": "SP_IprocVendor-015",
+        "waf_host": "iprocvendor.patra-jasa.com",
+        "matched_pattern": "MD5 hash match against known web shell database",
+        "signature_id": "Not recorded in the WAF dataset provided for this finding",
+        "waf_action": "Alert_Deny",
+        "waf_severity": "Medium",
+        "threat_level": "Severe",
+        "attack_category": "Unrestricted File Upload - Web Shell Confirmed (MD5 Hash Match)",
+        "owasp_primary": "A03:2021-Injection",
+        "owasp_secondary": "A05:2021-Security Misconfiguration",
+        "waf_detected_file": "3JLMMQGPjALvurxUhLwy9IzXSCF.jsp",
+        "waf_detected_md5": "4fc95b693c53487fbb2edf0c22acf8d3",
+        "waf_message": (
+            "File [3JLMMQGPjALvurxUhLwy9IzXSCF.jsp] MD5 "
+            "[4fc95b693c53487fbb2edf0c22acf8d3] matched web shell [JSP]"
+        ),
+        "objective": (
+            "Demonstrate insufficient file-upload validation and controlled "
+            "server-side execution behavior."
+        ),
+        "recon": (
+            "The tester signs in and uses ordinary attendance functionality "
+            "— leave/permission requests commonly require a supporting "
+            "document attachment (doctor's note, approval letter), a "
+            "natural place to look for a file-upload feature."
+        ),
+        "impact_note": (
+            "The original detection was an exact MD5 hash match against a "
+            "known JSP web shell on a Java/JSP-based vendor stack. This lab "
+            "runs on Python/Flask, so the reproduction targets the same "
+            "vulnerability class — unrestricted extension + server-side "
+            "execution of uploaded content — using a Python script instead "
+            "of a byte-identical JSP file; matching the exact MD5 would only "
+            "be possible by uploading that same known-malicious binary, "
+            "which this lab intentionally does not do."
+        ),
+        "lab_result": (
+            "Reproduced — a .py upload with no legitimate document content "
+            "is accepted with no extension/type restriction and its "
+            "contents genuinely execute server-side (real subprocess "
+            "output returned, not simulated)."
+        ),
+        "endpoint": "/defaultroot/upload/fileUpload.controller",
+        "param": "document",
+        "endpoint_label": "/defaultroot/upload/fileUpload.controller (multipart: document)",
+        "http_method_label": "POST",
+        "waf_evidence_methods": ["POST"],
+        "lab_methods": ["POST"],
+        "waf_request_pattern": "POST /defaultroot/upload/fileUpload.controller",
+        "local_evidence_path": (
+            "lab-data/uploads/cuti/ — uploaded file saved verbatim; "
+            ".py/.sh uploads executed server-side"
+        ),
+        "discovery_source": (
+            "The Cuti & Izin page's \"Ajukan Cuti Baru\" form includes an "
+            "\"Upload Surat Keterangan\" file attachment; submitting it and "
+            "inspecting the POST request (browser DevTools/Burp) reveals it "
+            "targets /defaultroot/upload/fileUpload.controller — found "
+            "through ordinary application use, before any WAF data was "
+            "consulted."
+        ),
+        "description": (
+            "Controlled validation of unrestricted file upload leading to "
+            "server-side code execution."
+        ),
+        "technical_summary": (
+            "The /defaultroot/upload/fileUpload.controller endpoint accepts "
+            "any uploaded filename and extension with no allow-list or "
+            "content inspection, saving "
+            "it as-is. Its document-preview step then executes .py uploads "
+            "via python3 and .sh uploads via bash, so an uploaded script "
+            "runs with the application's own privileges — a functioning web "
+            "shell."
+        ),
+        "business_impact": (
+            "An attacker able to reach this endpoint could execute arbitrary "
+            "code with the privileges of the application process, "
+            "potentially leading to full host compromise."
+        ),
+        "waf_note": (
+            "WAF evidence and laboratory validation both used POST. The "
+            "original WAF detection confirmed an exact MD5 hash match "
+            "against a known JSP web shell signature; the lab reproduces "
+            "the same underlying vulnerability class (unrestricted upload "
+            "leading to server-side script execution) with a Python script "
+            "instead, since this lab's stack is Flask/Python, not JSP."
+        ),
+        "replay_links": [],
+        "safe_links": [],
+        "remediation": {
+            "title": "Enforce a strict upload allow-list and never execute uploaded content",
+            "priority": "Immediate",
+            "dedup_key": "unrestricted-upload",
+            "component": "/defaultroot/upload/fileUpload.controller (document parameter)",
+            "description": (
+                "The /defaultroot/upload/fileUpload.controller endpoint accepts any file extension "
+                "and its preview step executes recognized script extensions "
+                "directly, turning an ordinary document-attachment feature "
+                "into a remote code execution primitive."
+            ),
+            "immediate_action": (
+                "Disable automatic processing of uploaded documents, or "
+                "restrict it to a fixed allow-list of safe document types "
+                "(PDF, JPG, PNG) validated by content, not filename."
+            ),
+            "long_term": (
+                "Never execute or interpret uploaded file content. Store "
+                "uploads outside the web root with randomized names, "
+                "validate content type by inspection rather than extension, "
+                "and serve them back with a fixed, non-executable content "
+                "type."
+            ),
+            "verification": (
+                "Confirm uploading a .py or .sh file no longer results in "
+                "server-side execution of its contents."
+            ),
+            "waf_mitigation": (
+                "As a temporary compensating control, deploy WAF rules "
+                "blocking uploads with executable-script extensions "
+                "(.py, .sh, .php, .jsp, etc.). This reduces exposure but "
+                "does not remove the underlying execution behavior."
+            ),
+        },
     },
 }
 
@@ -503,7 +1394,13 @@ _BEHAVIOR_BY_STATUS = {
     "EXECUTED": "Operating-system command executed successfully",
     "FILE_READ": "Local file included; contents returned",
     "TRAVERSAL_READ": "Path traversal escaped the intended directory; contents returned",
+    "QUERY_EXECUTED": "SQL query executed against the members database; result rows returned",
+    "FETCHED": "Server-side request issued to the supplied URL; response returned",
+    "SCRIPT_EXECUTED": "Uploaded script executed server-side; process output returned",
+    "ACCEPTED": "Uploaded file accepted and stored with no type validation",
+    "REFLECTED": "Supplied value reflected into the response with no output encoding",
     "NO_INPUT": "No input parameter supplied",
+    "NO_MATCH": "Query executed; no matching rows",
     "ERROR": "Execution/read failed",
 }
 
@@ -511,7 +1408,34 @@ _EVIDENCE_SCENARIO_DEFS = [
     {"id": "VAL-CMD-001", "title": "OS Command Injection", "input_key": "cmd"},
     {"id": "VAL-LFI-001", "title": "Local File Inclusion (LFI)", "input_key": "file"},
     {"id": "VAL-TRAV-001", "title": "Directory Traversal", "input_key": "path"},
+    {"id": "VAL-SQLI-001", "title": "SQL Injection (UNION-based)", "input_key": "id"},
+    {"id": "VAL-SSRF-001", "title": "Server-Side Request Forgery (SSRF)", "input_key": "url"},
+    {"id": "VAL-UPLOAD-001", "title": "Unrestricted File Upload / Web Shell", "input_key": "filename"},
+    {"id": "VAL-XSS-001", "title": "Reflected Cross-Site Scripting (XSS)", "input_key": "value"},
 ]
+
+
+def _parse_result_columns(result_sample_repr):
+    """Turn a logged result_sample repr (e.g. "(1, 2, ..., 'fcoum', ...)")
+    back into a [(column_number, value), ...] list for display.
+
+    Never fabricates a value -- this only re-parses what search_members()
+    already logged as the real SQLite row via %r, using ast.literal_eval
+    (safe: it evaluates literals only, no code execution) against a
+    string this application generated itself, not request input. Column
+    12 shows 'fcoum' here if and only if that is what the real
+    unhex('66636f756d') call actually returned to SQLite for that
+    request.
+    """
+    if not result_sample_repr:
+        return []
+    try:
+        row = ast.literal_eval(result_sample_repr)
+    except (ValueError, SyntaxError):
+        return []
+    if not isinstance(row, tuple):
+        return []
+    return list(enumerate(row, start=1))
 
 
 def build_evidence_scenarios(limit_per_scenario=5):
@@ -524,6 +1448,23 @@ def build_evidence_scenarios(limit_per_scenario=5):
         for entry in matched:
             f = entry["fields"]
             status = f.get("status", "")
+            sql_text = f.get("sql", "")
+            result_columns = _parse_result_columns(f.get("result_sample", ""))
+            # Derived, not hardcoded: "union detected" reflects whether the
+            # SQL actually sent to SQLite (sql_text) contains a UNION
+            # clause AND that query actually executed successfully
+            # (status) -- both facts already captured from the real
+            # request, never asserted independently of them.
+            union_detected = bool(result_columns) and status == "QUERY_EXECUTED" and "union" in sql_text.lower()
+            result_json = ""
+            if result_columns:
+                result_json = json.dumps(
+                    {
+                        "column_count": len(result_columns),
+                        "values": [v for _, v in result_columns],
+                    },
+                    indent=2,
+                )
             entries.append({
                 "timestamp": entry["timestamp"],
                 "source_ip": f.get("ip", "unknown"),
@@ -532,6 +1473,19 @@ def build_evidence_scenarios(limit_per_scenario=5):
                 "input": f.get(definition["input_key"], "(none)"),
                 "behavior": _BEHAVIOR_BY_STATUS.get(status, status or "Unknown"),
                 "status": status,
+                # Only populated for VAL-SQLI-001 log lines (see
+                # search_members()) -- the actual constructed SQL, the
+                # actual SQLite result row, and the actual SQLite error
+                # (if any), all generic pass-throughs of whatever was
+                # logged, never fabricated here.
+                "raw_query": f.get("raw_query", ""),
+                "sql": sql_text,
+                "result_sample": f.get("result_sample", ""),
+                "result_columns": result_columns,
+                "result_column_count": len(result_columns),
+                "union_detected": union_detected,
+                "result_json": result_json,
+                "sqlite_error": f.get("sqlite_error", ""),
             })
         scenarios.append({
             "id": definition["id"],
@@ -553,6 +1507,10 @@ def inject_portal_globals():
         "lab_port": LAB_PORT_ENV,
         "validation_defs": VALIDATION_DEFS,
         "validation_order": VALIDATION_ORDER,
+        "company_name": COMPANY_NAME,
+        "product_name": PRODUCT_NAME,
+        "company_domain": COMPANY_DOMAIN,
+        "hr_email": HR_EMAIL,
     }
 
 
@@ -571,9 +1529,37 @@ def login_required(view):
 # --------------------------------------------------------------------
 @app.route("/")
 def landing():
-    # Plain PresensiKu landing page — no vulnerability here. VAL-TRAV-001
-    # now lives at /api/file?path= (see below), not "/".
-    return render_template("landing.html")
+    # --------------------------------------------------------------
+    # INTENTIONAL VULNERABILITY (VAL-XSS-001) — Reflected XSS
+    # This lab route reproduces the WAF finding SP_LMS-Frontend-015:
+    #   /?wapiskqm%3D<script>alert("XSS");</script>
+    # The "wapiskqm" campaign-preview parameter is a real, if obscure,
+    # piece of application behavior (see the HTML comment in
+    # landing.html) — a leftover marketing preview feature that echoes
+    # its value into the page with NO output encoding (rendered via
+    # Jinja's `| safe` filter, which deliberately disables Jinja's
+    # normal autoescaping — this is the genuine, real mechanism by
+    # which the reflection happens, not a simulation of one). Whatever
+    # HTML/JS the caller supplies is reflected byte-for-byte and, if
+    # opened in a real browser, genuinely parses and executes.
+    # _get_waf_style_param() (shared with VAL-CMD-001/LFI/TRAV) lets the
+    # exact WAF-evidence URL be replayed byte-for-byte — its "=" is
+    # itself percent-encoded ("wapiskqm%3D..."), which plain
+    # request.args parsing cannot see.
+    # --------------------------------------------------------------
+    campaign_code = _get_waf_style_param("wapiskqm")
+    campaign_banner = ""
+    if campaign_code:
+        campaign_banner = f"Campaign preview: {campaign_code}"
+        source_ip = request.remote_addr or "unknown"
+        logger.info(
+            "VAL-XSS-001 | ip=%s | method=%s | endpoint=/ | scenario=reflected-xss | "
+            "parameter=wapiskqm | raw_query=%r | value=%r | test_stage=reflection-validation | "
+            "result=REFLECTED | evidence_reference=landing-response-body",
+            source_ip, request.method,
+            request.query_string.decode("utf-8", errors="replace"), campaign_code,
+        )
+    return render_template("landing.html", campaign_banner=campaign_banner)
 
 
 # --------------------------------------------------------------------
@@ -637,20 +1623,21 @@ EMPLOYEE = {
     "employee_id": "EMP-2024-0142",
     "position": "Software Engineer",
     "department": "Engineering",
-    "email": "ayu.lestari@presensiku.local",
+    "email": f"ayu.lestari@{COMPANY_DOMAIN}",
     "join_date": "2024-03-01",
 }
 
 COMPANY_INFO = {
-    "name": "PT Contoh Teknologi Indonesia",
+    "name": COMPANY_NAME,
     "address": "Jl. Sudirman No. 123, Jakarta Selatan",
     "phone": "+62 21 5550 1234",
-    "email": "hr@presensiku.local",
-    "working_hours": "08:00 - 17:00 WIB",
+    "email": HR_EMAIL,
+    "working_hours": "08:00 - 17:00 WIB, Senin - Jumat",
     "about": (
-        "PT Contoh Teknologi Indonesia is a fictional company used for "
-        "this laboratory environment. PresensiKu is its internal "
-        "employee attendance system."
+        f"{COMPANY_NAME} merupakan perusahaan yang menyediakan solusi "
+        f"teknologi dan layanan keamanan informasi. {PRODUCT_NAME} "
+        "merupakan sistem internal perusahaan untuk mendukung "
+        "pengelolaan kehadiran karyawan."
     ),
 }
 
@@ -755,9 +1742,169 @@ def profil():
 
 
 COMPANY_DOCUMENTS = [
-    {"label": "Peraturan Perusahaan", "filename": "peraturan-perusahaan.txt"},
-    {"label": "Panduan Presensi", "filename": "panduan-presensi.txt"},
+    {
+        "slug": "peraturan-perusahaan",
+        "label": "Peraturan Perusahaan",
+        "filename": "peraturan-perusahaan.txt",
+        "category": "Kebijakan Perusahaan",
+        "version": "v1.0",
+        "status": "Berlaku",
+        "updated_at": "12 September 2026",
+        "summary": "Ketentuan umum yang berlaku bagi seluruh karyawan PT DrishtiSec.",
+        "tagline": "Kebijakan dan ketentuan umum perusahaan",
+        "section_titles": ["Jam Kerja", "Kehadiran", "Keterlambatan", "Cuti Tahunan"],
+        "closing_title": "Dokumen Internal",
+    },
+    {
+        "slug": "panduan-presensi",
+        "label": "Panduan Presensi",
+        "filename": "panduan-presensi.txt",
+        "category": "Panduan Penggunaan",
+        "version": "v1.0",
+        "status": "Aktif",
+        "updated_at": "12 September 2026",
+        "summary": "Panduan penggunaan aplikasi PresensiKu untuk pencatatan kehadiran karyawan.",
+        "tagline": "Panduan penggunaan aplikasi PresensiKu",
+        "section_titles": ["Membuka Menu Presensi", "Check In", "Check Out", "Riwayat Kehadiran", "Pengajuan Cuti"],
+        "closing_title": "Butuh Bantuan?",
+    },
 ]
+COMPANY_DOCUMENTS_BY_SLUG = {doc["slug"]: doc for doc in COMPANY_DOCUMENTS}
+
+
+def _extract_document_parts(raw_text):
+    """Split a source document into (numbered items, closing note).
+
+    Ordinary presentation helper for the /dokumen/<slug> viewer — not
+    part of the vulnerability surface. Input always comes from a fixed,
+    developer-controlled filename (via COMPANY_DOCUMENTS_BY_SLUG), never
+    from request input, so this has nothing to do with VAL-TRAV-001.
+
+    Blank lines separate blocks; divider lines of "=" or "-" are
+    dropped. The first block (company/document letterhead) is skipped —
+    the template renders its own letterhead. Any block where every line
+    starts with "N. " contributes its items, in order, to the numbered
+    section list (paired with COMPANY_DOCUMENTS' section_titles by the
+    caller). The last remaining block becomes the closing note. Content
+    itself is never altered, only split apart for layout.
+    """
+    blocks = []
+    current = []
+
+    def flush():
+        lines = [ln.strip() for ln in current if not re.fullmatch(r"[=\-]{3,}", ln.strip())]
+        current.clear()
+        if lines:
+            blocks.append(lines)
+
+    for line in raw_text.splitlines():
+        if line.strip() == "":
+            flush()
+        else:
+            current.append(line)
+    flush()
+
+    numbered_items = []
+    closing_lines = []
+    for block in blocks[1:]:
+        if all(re.match(r"^\d+\.\s", ln) for ln in block):
+            numbered_items.extend(re.sub(r"^\d+\.\s*", "", ln) for ln in block)
+        else:
+            closing_lines = block
+    return numbered_items, " ".join(closing_lines)
+
+
+def _document_pdf_footer(canvas, pdf_doc):
+    canvas.saveState()
+    canvas.setFont("Lato", 8)
+    canvas.setFillColor(_PDF_MUTED)
+    canvas.drawString(0.75 * inch, 0.5 * inch, f"{COMPANY_NAME} — Dokumen Internal")
+    canvas.drawRightString(LETTER[0] - 0.75 * inch, 0.5 * inch, f"Page {pdf_doc.page}")
+    canvas.restoreState()
+
+
+def generate_document_pdf(doc, sections, closing_note):
+    """Render a real, populated PDF for a /dokumen/<slug> document —
+    reuses the same ReportLab setup (fonts, styles, PT DrishtiSec cover
+    treatment) already registered for the security validation report,
+    per a completely separate, non-empty document each time this is
+    called. Never cached across requests, so it always reflects the
+    current section content.
+    """
+    path = os.path.join(REPORTS_DIR, f"dokumen-{doc['slug']}.pdf")
+    pdf_doc = SimpleDocTemplate(
+        path, pagesize=LETTER,
+        topMargin=0, bottomMargin=0.85 * inch,
+        leftMargin=0.75 * inch, rightMargin=0.75 * inch,
+        title=doc["label"],
+    )
+    story = []
+
+    brand_cell = [
+        Paragraph(COMPANY_NAME, _PDF_STYLES["brand"]),
+        Paragraph(doc["label"], _PDF_STYLES["brand_sub"]),
+    ]
+    cover_row = [brand_cell]
+    cover_col_widths = [7 * inch]
+    if os.path.exists(LOGO_PATH):
+        cover_row = [Image(LOGO_PATH, width=0.85 * inch, height=0.85 * inch), brand_cell]
+        cover_col_widths = [1.15 * inch, 5.85 * inch]
+    cover = Table([cover_row], colWidths=cover_col_widths)
+    cover.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), _PDF_NAVY),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (0, 0), 30),
+        ("LEFTPADDING", (-1, 0), (-1, 0), 14),
+        ("TOPPADDING", (0, 0), (-1, -1), 28),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 28),
+    ]))
+    story.append(cover)
+    story.append(Spacer(1, 20))
+
+    meta_rows = [
+        ["Kategori", doc["category"]],
+        ["Terakhir Diperbarui", doc["updated_at"]],
+        ["Versi", doc["version"]],
+        ["Status", doc["status"]],
+    ]
+    meta_table = Table(
+        [[Paragraph(f"<b>{k}</b>", _PDF_STYLES["body"]), Paragraph(v, _PDF_STYLES["body"])]
+         for k, v in meta_rows],
+        colWidths=[1.8 * inch, 5.2 * inch],
+    )
+    meta_table.setStyle(TableStyle([
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(meta_table)
+    story.append(Spacer(1, 14))
+
+    for i, (title, body) in enumerate(sections, start=1):
+        story.append(Paragraph(f"{i:02d}. {title}", _PDF_STYLES["h2"]))
+        story.append(Paragraph(body, _PDF_STYLES["body"]))
+
+    if closing_note:
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(closing_note, _PDF_STYLES["small"]))
+
+    pdf_doc.build(story, onFirstPage=_document_pdf_footer, onLaterPages=_document_pdf_footer)
+    return path
+
+
+@app.route("/portal/direktori")
+@login_required
+def direktori():
+    cur = MEMBERS_DB.cursor()
+    cur.execute(
+        "SELECT id, employee_id, full_name, position, department FROM members ORDER BY id"
+    )
+    members = cur.fetchall()
+    return render_template(
+        "direktori.html",
+        breadcrumb=["Direktori Karyawan"],
+        members=members,
+    )
 
 
 @app.route("/portal/perusahaan")
@@ -768,6 +1915,63 @@ def perusahaan():
         breadcrumb=["Informasi Perusahaan"],
         company=COMPANY_INFO,
         documents=COMPANY_DOCUMENTS,
+    )
+
+
+# ----------------------------------------------------------------------
+# /dokumen/<slug> — the normal, user-facing document viewer for the
+# "Dokumen Perusahaan" card on Informasi Perusahaan. This is an
+# ordinary authenticated presentation feature, unrelated to the
+# VAL-TRAV-001 vulnerability surface: `slug` is only ever looked up
+# against the fixed COMPANY_DOCUMENTS_BY_SLUG dict below, never used to
+# build a filesystem path, so no request input reaches the filesystem
+# here. /api/file (the actual vulnerable endpoint) is untouched and
+# stays reachable for security validation — it is simply no longer
+# linked from this normal page.
+# ----------------------------------------------------------------------
+@app.route("/dokumen/<slug>")
+@login_required
+def dokumen_viewer(slug):
+    doc = COMPANY_DOCUMENTS_BY_SLUG.get(slug)
+    if not doc:
+        abort(404)
+    file_path = os.path.join(TRAV_BASE_DIR, doc["filename"])
+    try:
+        with open(file_path, "r") as f:
+            raw_text = f.read()
+    except OSError:
+        abort(404)
+    items, closing_note = _extract_document_parts(raw_text)
+    sections = list(zip(doc["section_titles"], items))
+    other_documents = [d for d in COMPANY_DOCUMENTS if d["slug"] != slug]
+    return render_template(
+        "dokumen_viewer.html",
+        breadcrumb=["Informasi Perusahaan", doc["label"]],
+        doc=doc,
+        sections=sections,
+        closing_note=closing_note,
+        other_documents=other_documents,
+    )
+
+
+@app.route("/dokumen/<slug>/unduh")
+@login_required
+def dokumen_download(slug):
+    doc = COMPANY_DOCUMENTS_BY_SLUG.get(slug)
+    if not doc:
+        abort(404)
+    file_path = os.path.join(TRAV_BASE_DIR, doc["filename"])
+    try:
+        with open(file_path, "r") as f:
+            raw_text = f.read()
+    except OSError:
+        abort(404)
+    items, closing_note = _extract_document_parts(raw_text)
+    sections = list(zip(doc["section_titles"], items))
+    pdf_path = generate_document_pdf(doc, sections, closing_note)
+    return send_file(
+        pdf_path, mimetype="application/pdf", as_attachment=True,
+        download_name=f"{doc['slug']}.pdf",
     )
 
 
@@ -947,6 +2151,16 @@ def _pdf_table_style():
     ])
 
 
+def _pdf_esc(value):
+    """Escape a value for safe inclusion in a ReportLab Paragraph/Table
+    cell. Several finding fields (e.g. VAL-XSS-001's WAF request pattern
+    and matched pattern) genuinely contain raw "<", ">", "&" — ReportLab's
+    Paragraph mini-markup parser treats those as tags and raises a syntax
+    error unless escaped first.
+    """
+    return _xml_escape("" if value is None else str(value))
+
+
 def generate_pdf_report():
     """Build reports/DrishtiSec_Security_Validation_Report.pdf from the
     same validation/evidence data the portal pages already show. Called
@@ -962,7 +2176,7 @@ def generate_pdf_report():
     story = []
 
     brand_cell = [
-        Paragraph("DrishtiSec", _PDF_STYLES["brand"]),
+        Paragraph(COMPANY_NAME, _PDF_STYLES["brand"]),
         Paragraph("Security Validation Report", _PDF_STYLES["brand_sub"]),
     ]
     cover_row = [brand_cell]
@@ -1007,13 +2221,15 @@ def generate_pdf_report():
     story.append(Paragraph(
         "This report documents a controlled black-box web application security "
         "assessment performed against an isolated laboratory target (PresensiKu). "
-        "Three vulnerabilities — OS Command Injection, Local File Inclusion, and "
-        "Directory Traversal — were independently discovered through application "
-        "enumeration, endpoint discovery, and parameter testing, then validated "
-        "for impact. Each validated finding was subsequently correlated against "
-        "prior WAF analysis, which recorded matching request patterns as "
-        "observed production traffic. All three findings were successfully "
-        "validated.",
+        "Seven vulnerabilities — OS Command Injection, Local File Inclusion, "
+        "Directory Traversal, SQL Injection (UNION-based), Server-Side "
+        "Request Forgery, Unrestricted File Upload / Web Shell, and Reflected "
+        "Cross-Site Scripting — were independently discovered through "
+        "application enumeration, endpoint discovery, and parameter testing, "
+        "then validated for impact. Each validated finding was subsequently "
+        "correlated against prior WAF analysis, which recorded matching "
+        "request patterns as observed production traffic. All seven findings "
+        "were successfully validated.",
         _PDF_STYLES["body"],
     ))
     story.append(Paragraph(
@@ -1088,39 +2304,60 @@ def generate_pdf_report():
     disc_rows = [["Endpoint", "Parameter", "How It Was Found"]]
     for vid in VALIDATION_ORDER:
         v = VALIDATION_DEFS[vid]
-        disc_rows.append([v["endpoint"], v["param"], v["discovery_source"]])
+        disc_rows.append([_pdf_esc(v["endpoint"]), _pdf_esc(v["param"]), _pdf_esc(v["discovery_source"])])
     disc_table = Table(disc_rows, colWidths=[1.3 * inch, 0.9 * inch, 5 * inch])
     disc_table.setStyle(_pdf_table_style())
     story.append(disc_table)
 
     story.append(Paragraph("Findings", _PDF_STYLES["h1"]))
+    story.append(Paragraph(
+        "Each finding below follows the same pipeline: Objective, Recon, "
+        "Discovery, Baseline Request, Security Testing, Validation, "
+        "Controlled Impact — all performed independently in this isolated "
+        "lab before any WAF data was consulted (see WAF Correlation, below).",
+        _PDF_STYLES["small"],
+    ))
     for vid in VALIDATION_ORDER:
         v = VALIDATION_DEFS[vid]
         story.append(Paragraph(
-            f"{vid} — {v['title']} (Severity: {v['severity']})", _PDF_STYLES["h2"]
+            f"{_pdf_esc(vid)} — {_pdf_esc(v['title'])} (Severity: {_pdf_esc(v['severity'])})", _PDF_STYLES["h2"]
         ))
-        story.append(Paragraph(v["technical_summary"], _PDF_STYLES["body"]))
+        if v.get("objective"):
+            story.append(Paragraph(f"<b>Objective:</b> {_pdf_esc(v['objective'])}", _PDF_STYLES["body"]))
+        if v.get("recon"):
+            story.append(Paragraph(f"<b>Recon:</b> {_pdf_esc(v['recon'])}", _PDF_STYLES["body"]))
+        story.append(Paragraph(f"<b>Discovery:</b> {_pdf_esc(v['discovery_source'])}", _PDF_STYLES["body"]))
         story.append(Paragraph(
-            f"<b>Business Impact:</b> {v['business_impact']}", _PDF_STYLES["body"]
+            f"<b>Baseline / Testing / Validation:</b> {_pdf_esc(v['technical_summary'])}",
+            _PDF_STYLES["body"],
         ))
+        story.append(Paragraph(
+            f"<b>Controlled Impact:</b> {_pdf_esc(v['business_impact'])}", _PDF_STYLES["body"]
+        ))
+        if v.get("impact_note"):
+            story.append(Paragraph(_pdf_esc(v["impact_note"]), _PDF_STYLES["small"]))
 
     story.append(Paragraph("Validation Results", _PDF_STYLES["h1"]))
     for vid in VALIDATION_ORDER:
         v = VALIDATION_DEFS[vid]
-        story.append(Paragraph(f"{vid} — {v['title']}", _PDF_STYLES["h2"]))
+        story.append(Paragraph(f"{_pdf_esc(vid)} — {_pdf_esc(v['title'])}", _PDF_STYLES["h2"]))
         story.append(Paragraph(
-            f"Status: <b>VALIDATED</b> &nbsp;&nbsp; WAF Reference: {v['waf_reference']} "
-            f"&nbsp;&nbsp; Endpoint: {v['endpoint']}",
+            f"Status: <b>VALIDATED</b> &nbsp;&nbsp; WAF Reference: {_pdf_esc(v['waf_reference'])} "
+            f"&nbsp;&nbsp; Endpoint: {_pdf_esc(v['endpoint'])}",
             _PDF_STYLES["mono"],
         ))
         story.append(Paragraph(
-            f"WAF request pattern: {v['waf_request_pattern']}",
+            f"Exact WAF Request Replay: {_pdf_esc(v['waf_request_pattern'])}",
             _PDF_STYLES["mono"],
         ))
         story.append(Paragraph(
-            f"Local evidence: {v['local_evidence_path']}",
+            f"Local evidence: {_pdf_esc(v['local_evidence_path'])}",
             _PDF_STYLES["mono"],
         ))
+        if v.get("waf_message"):
+            story.append(Paragraph(f"WAF message: {_pdf_esc(v['waf_message'])}", _PDF_STYLES["mono"]))
+        if v.get("lab_result"):
+            story.append(Paragraph(f"Laboratory result: {_pdf_esc(v['lab_result'])}", _PDF_STYLES["mono"]))
         if vid == "VAL-CMD-001":
             story.append(Paragraph(
                 "WAF evidence: GET-based request pattern. Laboratory validation: "
@@ -1130,23 +2367,20 @@ def generate_pdf_report():
                 _PDF_STYLES["body"],
             ))
         else:
-            story.append(Paragraph(
-                "WAF evidence and laboratory validation both used GET.",
-                _PDF_STYLES["body"],
-            ))
+            story.append(Paragraph(_pdf_esc(v["waf_note"]), _PDF_STYLES["body"]))
 
     story.append(Paragraph("Evidence", _PDF_STYLES["h1"]))
     for scenario in build_evidence_scenarios(limit_per_scenario=1):
         v = VALIDATION_DEFS[scenario["id"]]
-        story.append(Paragraph(f"{scenario['id']} — {v['title']}", _PDF_STYLES["h2"]))
+        story.append(Paragraph(f"{_pdf_esc(scenario['id'])} — {_pdf_esc(v['title'])}", _PDF_STYLES["h2"]))
         if scenario["entries"]:
             e = scenario["entries"][0]
             story.append(Paragraph(
-                f"timestamp={e['timestamp']} source_ip={e['source_ip']} "
-                f"method={e['method']} endpoint={e['endpoint']} status={e['status']}",
+                f"timestamp={_pdf_esc(e['timestamp'])} source_ip={_pdf_esc(e['source_ip'])} "
+                f"method={_pdf_esc(e['method'])} endpoint={_pdf_esc(e['endpoint'])} status={_pdf_esc(e['status'])}",
                 _PDF_STYLES["mono"],
             ))
-            story.append(Paragraph(e["behavior"], _PDF_STYLES["body"]))
+            story.append(Paragraph(_pdf_esc(e["behavior"]), _PDF_STYLES["body"]))
         else:
             story.append(Paragraph(
                 "No application log entry captured yet for this scenario.",
@@ -1156,13 +2390,18 @@ def generate_pdf_report():
     story.append(Paragraph("Impact", _PDF_STYLES["h1"]))
     story.append(Paragraph(
         "Combined, these findings would allow an attacker to execute arbitrary "
-        "operating-system commands and to read arbitrary files readable by the "
-        "application process — including application configuration, database "
-        "credentials, and cloud/service credentials. Any one of the three "
-        "findings, if present in a production deployment, would be sufficient "
-        "for significant data exposure; together they indicate a systemic lack "
-        "of input validation across the application's file- and "
-        "command-handling parameters.",
+        "operating-system commands (directly, and via an uploaded script), to "
+        "read arbitrary files readable by the application process — including "
+        "application configuration, database credentials, and cloud/service "
+        "credentials — to extract arbitrary application-database records "
+        "including internal service credentials, and to make the server issue "
+        "requests to internal-only infrastructure, and to execute arbitrary "
+        "JavaScript in a victim's browser session against the application "
+        "origin. Any one of these findings, if present in a production "
+        "deployment, would be sufficient for significant data exposure or "
+        "full host compromise; together they indicate a systemic lack of "
+        "input validation and output encoding across the application's "
+        "file-, command-, query-, upload-, and output-handling parameters.",
         _PDF_STYLES["body"],
     ))
 
@@ -1184,6 +2423,18 @@ def generate_pdf_report():
         "gate legacy admin panels before deployment.",
         "Add automated regression tests asserting that traversal sequences "
         "and shell metacharacters are rejected by these parameters.",
+        "Use parameterized queries or an ORM's bound-parameter interface for "
+        "all database access; never build SQL strings from request input.",
+        "Validate and allow-list destination hosts before any server-side "
+        "HTTP fetch; deny requests to loopback, link-local, and private "
+        "address ranges.",
+        "Enforce a strict file-type allow-list (validated by content, not "
+        "extension) on all upload endpoints, and never execute or interpret "
+        "uploaded file content.",
+        "Never disable a templating engine's automatic output escaping "
+        "(e.g. Jinja's `| safe` filter) for request-influenced values; where "
+        "rich HTML must be rendered, pass it through an allow-list HTML "
+        "sanitizer instead.",
     ):
         story.append(Paragraph(f"&bull; {rec}", _PDF_STYLES["body"]))
 
@@ -1198,20 +2449,42 @@ def generate_pdf_report():
     corr_rows = [["Validation", "Discovery Source", "WAF Reference", "Status"]]
     for vid in VALIDATION_ORDER:
         v = VALIDATION_DEFS[vid]
-        corr_rows.append([vid, v["discovery_source"], v["waf_reference"], "Validated"])
+        corr_rows.append([_pdf_esc(vid), _pdf_esc(v["discovery_source"]), _pdf_esc(v["waf_reference"]), "Validated"])
     corr_table = Table(corr_rows, colWidths=[1.1 * inch, 4.3 * inch, 1.1 * inch, 0.7 * inch])
     corr_table.setStyle(_pdf_table_style())
     story.append(corr_table)
 
+    story.append(Paragraph(
+        "WAF-reported detail for each event, preserved verbatim from the "
+        "source WAF dataset:",
+        _PDF_STYLES["small"],
+    ))
+    waf_rows = [["Validation", "Host", "Matched Pattern / Signature", "Action", "Category"]]
+    for vid in VALIDATION_ORDER:
+        v = VALIDATION_DEFS[vid]
+        waf_rows.append([
+            _pdf_esc(vid),
+            _pdf_esc(v.get("waf_host", "N/A")),
+            _pdf_esc(f"{v.get('matched_pattern', 'N/A')} ({v.get('signature_id', 'N/A')})"),
+            _pdf_esc(v.get("waf_action", "N/A")),
+            _pdf_esc(v.get("attack_category", "N/A")),
+        ])
+    waf_table = Table(waf_rows, colWidths=[1.0 * inch, 1.5 * inch, 2.1 * inch, 0.9 * inch, 1.7 * inch])
+    waf_table.setStyle(_pdf_table_style())
+    story.append(waf_table)
+
     story.append(Paragraph("Conclusion", _PDF_STYLES["h1"]))
     story.append(Paragraph(
-        "All three findings — OS Command Injection, Local File Inclusion, and "
-        "Directory Traversal — were independently discovered through "
-        "application assessment and successfully validated with observable "
-        "impact against the isolated laboratory target. Each finding's request "
-        "pattern was subsequently corroborated by prior WAF analysis. This "
-        "constitutes successful controlled reproduction in an isolated "
-        "vulnerable environment, not exploitation of a production system.",
+        "All seven findings — OS Command Injection, Local File Inclusion, "
+        "Directory Traversal, SQL Injection (UNION-based), Server-Side "
+        "Request Forgery, Unrestricted File Upload / Web Shell, and Reflected "
+        "Cross-Site Scripting — were independently discovered through "
+        "application assessment and "
+        "successfully validated with observable impact against the isolated "
+        "laboratory target. Each finding's request pattern was subsequently "
+        "corroborated by prior WAF analysis. This constitutes successful "
+        "controlled reproduction in an isolated vulnerable environment, not "
+        "exploitation of a production system.",
         _PDF_STYLES["body"],
     ))
 
@@ -1253,6 +2526,9 @@ def admin_panel():
 # Evidence/Findings pages (/portal/evidence, /portal/findings).
 # ======================================================================
 
+_WAF_STYLE_PARAM_CACHE = {}
+
+
 def _get_waf_style_param(key):
     """Read `key` from normal GET/POST parsing first (request.values).
 
@@ -1263,17 +2539,27 @@ def _get_waf_style_param(key):
     splits on a literal "=" BEFORE percent-decoding, so that form is
     otherwise invisible to request.values — this lets a WAF-evidence URL
     be replayed exactly as it appears in the finalized WAF Excel.
+
+    Also tolerates a single stray backtick between the key and the
+    encoded "=" (e.g. "id`%3D520)..."), exactly as recorded in the
+    SP_PAM-047 WAF event for VAL-SQLI-001 — some WAF export tooling
+    appends this artifact to the raw request line. Matching is
+    case-insensitive, mirroring how WAF signature matching itself is
+    typically case-insensitive.
     """
     value = request.values.get(key, "")
     if value:
         return value
 
     raw_qs = request.query_string.decode("utf-8", errors="replace")
-    marker = f"{key}%3D"
-    idx = raw_qs.lower().find(marker.lower())
-    if idx == -1:
+    pattern = _WAF_STYLE_PARAM_CACHE.get(key)
+    if pattern is None:
+        pattern = re.compile(re.escape(key) + r"`?%3[dD]")
+        _WAF_STYLE_PARAM_CACHE[key] = pattern
+    match = pattern.search(raw_qs)
+    if not match:
         return ""
-    start = idx + len(marker)
+    start = match.end()
     end = raw_qs.find("&", start)
     raw_value = raw_qs[start:] if end == -1 else raw_qs[start:end]
     return unquote(raw_value)
@@ -1449,6 +2735,208 @@ def api_file():
         return Response("Error: missing required parameter 'path'.\n", mimetype="text/plain")
 
     return _serve_lfi_target(supplied_path, "VAL-TRAV-001", "/api/file", source_ip, TRAV_BASE_DIR, param_name="path")
+
+
+# ======================================================================
+# VAL-SQLI-001. /search/members/ is the backend for the "Direktori
+# Karyawan" page's per-employee "Lihat Detail" links (?id=1, ?id=2,
+# ...) — that is how the "id" parameter is discovered, without any WAF
+# knowledge. The supplied value is formatted directly into the SQL
+# string with no parameter binding and executed as-is against the real
+# MEMBERS_DB SQLite connection, via the vulnerable query layer defined
+# above (_SQLI_SELECT_COLUMNS, _balance_sqli_parens, _sqli_unhex) —
+# built specifically so the exact, unmodified SP_PAM-047 payload (32
+# expressions, unhex() included) executes natively. Do NOT add input
+# validation/binding here — it would defeat the purpose of the lab.
+# ======================================================================
+@app.route("/search/members/", methods=["GET"])
+def search_members():
+    # _get_waf_style_param() lets the exact WAF-evidence URL for
+    # SP_PAM-047 be replayed byte-for-byte: its "id" key is followed by
+    # a stray backtick and its "=" is itself percent-encoded
+    # ("id`%3D520)..."), which plain request.args parsing cannot see.
+    source_ip = request.remote_addr or "unknown"
+    raw_query = request.query_string.decode("utf-8", errors="replace")
+    supplied_id = _get_waf_style_param("id")
+
+    if not supplied_id:
+        logger.info(
+            "VAL-SQLI-001 | ip=%s | method=%s | endpoint=/search/members/ | "
+            "raw_query=%r | id=<none> | status=NO_INPUT",
+            source_ip, request.method, raw_query,
+        )
+        return render_template(
+            "search_results.html", query_id="", columns=[],
+            rows=[], error=None, no_input=True,
+        )
+
+    # Vulnerable query layer: SELECT from the dedicated sqli_members
+    # table, which has exactly the 32 real, realistic HR-record columns
+    # (_SQLI_MEMBERS_COLUMNS) SP_PAM-047's 32-expression UNION SELECT
+    # expects — no NULL padding, no forcing the ordinary "members" table
+    # into an unrealistic shape (that table is untouched, used only by
+    # /portal/direktori). Plus generic paren-balancing (applied to every
+    # request, not attack-specific) on the "IN (...)" clause.
+    sql = (
+        f"SELECT {_SQLI_SELECT_COLUMNS} FROM sqli_members "
+        f"WHERE id IN ({_balance_sqli_parens(supplied_id)}"
+    )
+    raw_rows, error = [], None
+    try:
+        cur = MEMBERS_DB.cursor()
+        cur.execute(sql)
+        raw_rows = cur.fetchall()
+        status = "QUERY_EXECUTED" if raw_rows else "NO_MATCH"
+    except Exception as exc:  # pragma: no cover - defensive only
+        error = f"Query error: {exc}"
+        status = "ERROR"
+
+    # The renderer always shows exactly what the query layer returned —
+    # all 32 real columns for a normal lookup (a legitimate full-profile
+    # employee search result), and whatever the UNION SELECT actually
+    # produced for the exact WAF payload. No branching on "is this an
+    # attack" anywhere here; same code path, same template, either way.
+    result_sample = raw_rows[0] if raw_rows else ()
+
+    logger.info(
+        "VAL-SQLI-001 | ip=%s | method=%s | endpoint=/search/members/ | "
+        "raw_query=%r | id=%r | sql=%r | rows=%d | result_sample=%r | "
+        "sqlite_error=%r | status=%s",
+        source_ip, request.method, raw_query, supplied_id, sql,
+        len(raw_rows), result_sample, error or "", status,
+    )
+    return render_template(
+        "search_results.html", query_id=supplied_id,
+        columns=_SQLI_MEMBERS_LABELS, rows=raw_rows, error=error, no_input=False,
+    )
+
+
+# ======================================================================
+# VAL-SSRF-001. /CookieAuth.dll is discovered via the Settings page's
+# "Integrasi Webmail Kantor (OWA)" connection-test feature. It accepts
+# either the simplified "url" parameter that feature's form submits, or
+# the raw WAF-evidence-style nested "GetLogon?url=...redir.asp?URL=..."
+# shape (also linked from that same Settings section), then performs a
+# genuine server-side HTTP fetch of the resolved target with
+# urllib.request — no destination allow-list. Do NOT add host
+# validation here — it would defeat the purpose of the lab.
+# ======================================================================
+def _resolve_ssrf_target():
+    raw_qs = request.query_string.decode("utf-8", errors="replace")
+    marker = "GetLogon?url="
+    idx = raw_qs.find(marker)
+    if idx != -1:
+        start = idx + len(marker)
+        end = raw_qs.find("&", start)
+        nested = unquote(raw_qs[start:] if end == -1 else raw_qs[start:end])
+        if "URL=" in nested:
+            return unquote(nested.split("URL=", 1)[1])
+        return nested
+    return request.args.get("url", "")
+
+
+@app.route("/CookieAuth.dll", methods=["GET"])
+def cookie_auth():
+    source_ip = request.remote_addr or "unknown"
+    raw_query = request.query_string.decode("utf-8", errors="replace")
+    target_url = _resolve_ssrf_target()
+
+    if not target_url:
+        logger.info(
+            "VAL-SSRF-001 | ip=%s | method=%s | endpoint=/CookieAuth.dll | "
+            "raw_query=%r | url=<none> | status=NO_INPUT",
+            source_ip, request.method, raw_query,
+        )
+        return render_template(
+            "ssrf_result.html", target_url="", status_code=None, body=None,
+            error=None, no_input=True,
+        )
+
+    if target_url.startswith("/"):
+        target_url = f"http://{LAB_HOST_ENV}:{LAB_PORT_ENV}{target_url}"
+
+    status_code, body, error = None, None, None
+    try:
+        req = urllib.request.Request(
+            target_url, headers={"User-Agent": "PresensiKu-WebmailSync/1.0"}
+        )
+        with urllib.request.urlopen(req, timeout=4) as resp:
+            status_code = resp.status
+            body = resp.read(4096).decode("utf-8", errors="replace")
+        status = "FETCHED"
+    except Exception as exc:  # pragma: no cover - defensive only
+        error = f"Connection error: {exc}"
+        status = "ERROR"
+
+    logger.info(
+        "VAL-SSRF-001 | ip=%s | method=%s | endpoint=/CookieAuth.dll | "
+        "raw_query=%r | url=%r | resp_status=%s | status=%s",
+        source_ip, request.method, raw_query, target_url, status_code, status,
+    )
+    return render_template(
+        "ssrf_result.html", target_url=target_url, status_code=status_code,
+        body=body, error=error, no_input=False,
+    )
+
+
+# ======================================================================
+# VAL-UPLOAD-001. The endpoint is the exact WAF-evidence path
+# (UPLOAD_ENDPOINT_PATH, "/defaultroot/upload/fileUpload.controller"),
+# discovered via the Cuti & Izin page's "Ajukan Cuti Baru" form's
+# "Upload Surat Keterangan" file input (its <form action> points here).
+# No extension/content-type allow-list is applied when saving the
+# file; recognized script extensions (.py, .sh) are then genuinely
+# executed via subprocess.run (same real-execution pattern as
+# VAL-CMD-001), framed in-app as an automatic document-preview step.
+# Do NOT add extension validation here — it would defeat the purpose
+# of the lab.
+# ======================================================================
+@app.route(UPLOAD_ENDPOINT_PATH, methods=["POST"])
+def cuti_upload():
+    source_ip = request.remote_addr or "unknown"
+    leave_type = request.form.get("leave_type", "")
+    uploaded = request.files.get("document")
+
+    if not uploaded or not uploaded.filename:
+        logger.info(
+            "VAL-UPLOAD-001 | ip=%s | method=%s | endpoint=%s | "
+            "filename=<none> | status=NO_INPUT",
+            source_ip, request.method, UPLOAD_ENDPOINT_PATH,
+        )
+        return Response("Error: no document uploaded.\n", mimetype="text/plain")
+
+    filename = os.path.basename(uploaded.filename)
+    saved_path = os.path.join(CUTI_UPLOAD_DIR, filename)
+    uploaded.save(saved_path)
+
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    output_lines = [
+        f"Dokumen '{filename}' diterima untuk pengajuan '{leave_type}'.",
+        f"Tersimpan di: {saved_path}",
+    ]
+
+    if ext in ("py", "sh"):
+        interpreter = "python3" if ext == "py" else "bash"
+        try:
+            completed = subprocess.run(
+                [interpreter, saved_path], capture_output=True, text=True, timeout=5,
+            )
+            output_lines.append("Auto-preview processor output:")
+            output_lines.append(completed.stdout + completed.stderr)
+            status = "SCRIPT_EXECUTED"
+        except Exception as exc:  # pragma: no cover - defensive only
+            output_lines.append(f"Execution error: {exc}")
+            status = "ERROR"
+    else:
+        output_lines.append("(No preview processor registered for this extension.)")
+        status = "ACCEPTED"
+
+    logger.info(
+        "VAL-UPLOAD-001 | ip=%s | method=%s | endpoint=%s | "
+        "filename=%r | ext=%r | status=%s",
+        source_ip, request.method, UPLOAD_ENDPOINT_PATH, filename, ext, status,
+    )
+    return Response("\n".join(output_lines) + "\n", mimetype="text/plain")
 
 
 @app.route("/download", methods=["GET"])

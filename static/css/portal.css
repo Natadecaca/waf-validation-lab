@@ -380,6 +380,36 @@ code, .mono { font-family: var(--mono); }
   .grid-3, .grid-2 { grid-template-columns: 1fr; }
 }
 
+/* Document viewer: wide main column + narrow metadata sidebar. */
+.doc-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem; align-items: start; }
+@media (max-width: 900px) {
+  .doc-layout { grid-template-columns: 1fr; }
+}
+.doc-section { display: flex; gap: 1rem; align-items: flex-start; }
+.doc-section-number {
+  flex: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 8px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-family: var(--mono);
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.doc-letterhead {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.4rem 1.6rem;
+}
+.doc-letterhead .eyebrow { color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 0.3rem; }
+.doc-letterhead h3 { margin: 0 0 0.3rem; font-size: 20px; }
+.doc-letterhead p { margin: 0; color: var(--text-secondary); font-size: 13.5px; }
+
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border);

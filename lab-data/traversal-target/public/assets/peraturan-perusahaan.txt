@@ -1,4 +1,4 @@
-PT Contoh Teknologi Indonesia
+PT DrishtiSec
 Peraturan Perusahaan (Ringkasan)
 ==================================
 
@@ -7,5 +7,4 @@ Peraturan Perusahaan (Ringkasan)
 3. Keterlambatan lebih dari 3 kali dalam sebulan akan dicatat oleh HR.
 4. Cuti tahunan diajukan minimal 3 hari kerja sebelumnya.
 
-Dokumen ini bersifat internal dan hanya untuk karyawan PT Contoh
-Teknologi Indonesia.
+Dokumen ini bersifat internal dan hanya untuk karyawan PT DrishtiSec.

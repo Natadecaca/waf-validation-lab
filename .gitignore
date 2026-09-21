@@ -37,3 +37,6 @@ logs/
 # Temporary files
 *.tmp
 *.bak
+lab-data/uploads/
+lab-data/cmd-root/logs
+lab-data/cmd-root/venv
